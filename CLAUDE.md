@@ -90,7 +90,7 @@ Controller memory:
 | **Notification-based coordination** | More complex than polling but lower CPU usage and better scalability. Polling fallback available. |
 | **Sequential pair testing** | Accurate measurements but slow. Parallel testing would be faster but less accurate. |
 | **Initiator-only result upload** | Reduces data duplication but loses responder's perspective. |
-| **TCP for bootstrap only** | Requires well-known controller address. No service discovery. |
+| **Container orchestrator for bootstrap** | Requires orchestrator (Docker/K8s) but eliminates TCP code. Controller passes NIXL metadata via env vars. |
 
 ---
 
@@ -98,22 +98,34 @@ Controller memory:
 
 ### 1.a Bootstrap
 
-Each agent runs as a standalone process on a cluster node. On startup:
+Each agent runs as a container spawned by the Controller via an orchestrator (Docker, Kubernetes). The Controller passes all necessary NIXL metadata via environment variables at container startup, eliminating the need for any TCP handshake.
 
-1. Agent initializes NIXL runtime
-2. Allocates and registers test buffer (see buffer design below)
-3. Serializes NIXL endpoint metadata + buffer descriptor into blobs
-4. Connects to Controller at well-known IP/port (TCP handshake)
-5. Receives from Controller:
-   - Assigned agent ID (unique integer)
-   - Controller's NIXL endpoint metadata blob
-   - Controller's registered buffer blob
-6. Computes its slot offset in Controller buffer
-7. Writes its own endpoint + buffer blobs into assigned slot via NIXL transfer
-8. Polls Controller buffer `ready_flag` until rendezvous complete
-9. Extracts all peer endpoint metadata and buffer information from Controller buffer
-10. Establishes NIXL connections to all peer agents
-11. Enters test loop (polls for commands from Controller)
+**Design Principle:** NIXL memory is the ONLY IPC mechanism. No TCP sockets.
+
+**Environment Variables (set by Controller via orchestrator):**
+
+| Variable | Description |
+|----------|-------------|
+| `CTRL_ENDPOINT` | Base64-encoded controller NIXL endpoint blob |
+| `CTRL_BUFFER` | Base64-encoded controller buffer descriptor |
+| `AGENT_ID` | Assigned agent ID (0, 1, 2, ...) |
+| `AGENT_SLOT_OFFSET` | Byte offset of this agent's slot in controller buffer |
+| `NUM_AGENTS` | Total number of agents |
+
+**Startup Sequence:**
+
+1. Agent container starts with env vars already set
+2. Parse and decode controller NIXL metadata from env vars
+3. Initialize NIXL runtime
+4. Allocate and register test buffer (see buffer design below)
+5. Serialize own NIXL endpoint metadata + buffer descriptor
+6. Connect to controller's NIXL endpoint (using decoded metadata)
+7. Write own endpoint + buffer blobs into assigned slot via NIXL transfer
+8. Initialize notifier watching own notification slot
+9. Wait for RENDEZVOUS_COMPLETE notification from Controller
+10. Read all peer endpoint metadata from Controller buffer
+11. Establish NIXL connections to all peer agents
+12. Enter event loop (notification-driven, waiting for commands)
 
 ### 1.b Inter-Agent Communication via NIXL
 
@@ -203,33 +215,75 @@ public:
     void initialize(const AgentConfig& config) {
         config_ = config;
 
-        // 1. Init NIXL
+        // 1. Parse controller metadata from environment variables
+        parse_env_vars();
+
+        // 2. Init NIXL
         endpoint_ = nixl_create_endpoint();
 
-        // 2. Allocate and register test buffer (size from config)
+        // 3. Allocate and register test buffer (size from config)
         test_buffer_size_ = config_.buffer_size();
         test_buffer_ = allocate_registered_memory(test_buffer_size_);
         test_buffer_desc_ = nixl_register_buffer(endpoint_, test_buffer_, test_buffer_size_);
 
-        LOG_INFO("Agent buffer allocated: {} MB ({}x {} byte slots)",
+        LOG_INFO("Agent {} buffer allocated: {} MB ({}x {} byte slots)",
+                 my_id_,
                  test_buffer_size_ / (1024*1024),
                  config_.window_size,
                  config_.max_message_size);
 
-        // 3. TCP handshake with controller (get ID, controller blobs)
-        tcp_handshake();
+        // 4. Connect to controller endpoint (using metadata from env vars)
+        connect_to_controller();
 
-        // 4. Write our metadata to controller buffer via NIXL
+        // 5. Write our metadata to controller buffer via NIXL
         write_metadata_to_controller();
 
-        // 5. Wait for rendezvous completion
-        wait_for_ready_flag();
+        // 6. Initialize notifications and wait for rendezvous completion
+        initialize_notifications();
+        wait_for_rendezvous_notification();
 
-        // 6. Read all peer metadata
+        // 7. Read all peer metadata
         read_peer_metadata();
 
-        // 7. Enter test loop
-        test_loop();
+        // 8. Enter event loop (notification-driven)
+        event_loop();
+    }
+
+private:
+    void parse_env_vars() {
+        // Parse agent ID
+        my_id_ = std::stoul(std::getenv("AGENT_ID"));
+        num_agents_ = std::stoul(std::getenv("NUM_AGENTS"));
+        slot_offset_ = std::stoull(std::getenv("AGENT_SLOT_OFFSET"));
+
+        // Decode controller NIXL metadata from base64
+        std::string ctrl_endpoint_b64 = std::getenv("CTRL_ENDPOINT");
+        std::string ctrl_buffer_b64 = std::getenv("CTRL_BUFFER");
+
+        controller_endpoint_ = deserialize_endpoint(base64_decode(ctrl_endpoint_b64));
+        controller_buffer_desc_ = deserialize_buffer(base64_decode(ctrl_buffer_b64));
+
+        LOG_INFO("Agent {} initialized from env vars, controller metadata decoded", my_id_);
+    }
+
+    void connect_to_controller() {
+        // Establish NIXL connection to controller using pre-parsed metadata
+        nixl_connect(endpoint_, controller_endpoint_);
+        LOG_INFO("Agent {} connected to controller via NIXL", my_id_);
+    }
+
+    void wait_for_rendezvous_notification() {
+        // Block until RENDEZVOUS_COMPLETE notification received
+        while (true) {
+            bool notified = notifier_.wait(RENDEZVOUS_TIMEOUT_MS);
+            if (notified) {
+                Notification n = read_notification();
+                if (n.type == NotificationType::RENDEZVOUS_COMPLETE) {
+                    LOG_INFO("Agent {} received rendezvous complete notification", my_id_);
+                    return;
+                }
+            }
+        }
     }
 };
 ```
@@ -1245,9 +1299,9 @@ map<uint32_t, vector<LatencyResultFull>> Controller::fetch_full_stats() {
 
 ### 2.a Startup and Agent Rendezvous
 
-The Controller orchestrates agent discovery and connection establishment.
+The Controller orchestrates agent spawning via a container orchestrator (Docker, Kubernetes) and manages rendezvous.
 
-**Design Principle:** TCP used ONLY for initial handshake. All subsequent communication via NIXL memory.
+**Design Principle:** NIXL memory is the ONLY IPC mechanism. Controller uses orchestrator API to spawn agent containers with NIXL metadata passed via environment variables.
 
 ---
 
@@ -1330,26 +1384,86 @@ enum class AgentState : uint32_t {
 
 ---
 
+#### Orchestrator Interface
+
+The Controller uses an abstract orchestrator interface to spawn agent containers. This allows pluggable backends (Docker, Kubernetes, etc.).
+
+```cpp
+// Abstract interface for container orchestration
+class Orchestrator {
+public:
+    virtual ~Orchestrator() = default;
+
+    // Spawn an agent container with specified environment variables
+    virtual void spawn_agent(
+        uint32_t agent_id,
+        const map<string, string>& env_vars
+    ) = 0;
+
+    // Wait for all spawned containers to be running
+    virtual bool wait_for_agents_running(uint64_t timeout_ms) = 0;
+
+    // Terminate all agent containers
+    virtual void terminate_all_agents() = 0;
+};
+
+// Docker implementation
+class DockerOrchestrator : public Orchestrator {
+    string image_name_;
+    vector<string> container_ids_;
+
+public:
+    DockerOrchestrator(const string& image) : image_name_(image) {}
+
+    void spawn_agent(uint32_t agent_id, const map<string, string>& env_vars) override {
+        // Use Docker SDK/API to create and start container
+        // docker run -e CTRL_ENDPOINT=... -e AGENT_ID=... --network host --privileged <image>
+        string container_id = docker_create_container(image_name_, env_vars);
+        docker_start_container(container_id);
+        container_ids_.push_back(container_id);
+    }
+
+    bool wait_for_agents_running(uint64_t timeout_ms) override {
+        // Poll container status until all are running
+        // ...
+    }
+
+    void terminate_all_agents() override {
+        for (const auto& id : container_ids_) {
+            docker_stop_container(id);
+            docker_remove_container(id);
+        }
+    }
+};
+```
+
 #### Initialization
 
 ```cpp
-void Controller::initialize(uint32_t num_agents) {
+void Controller::initialize(uint32_t num_agents, Orchestrator& orchestrator) {
+    num_agents_ = num_agents;
+    orchestrator_ = &orchestrator;
+
     // 1. Calculate buffer size
     size_t header_size = sizeof(BufferHeader);
     size_t agent_slots_size = num_agents * AGENT_SLOT_SIZE;
     size_t test_ctrl_size = sizeof(TestCommand) + num_agents * AGENT_STATUS_SIZE;
+    size_t notification_size = num_agents * NOTIFICATION_SLOT_SIZE;
     size_t results_size = num_agents * AGENT_RESULT_SIZE;
-    size_t total_size = header_size + agent_slots_size + test_ctrl_size + results_size;
+    size_t total_size = header_size + agent_slots_size + test_ctrl_size +
+                        notification_size + results_size;
 
     // 2. Allocate and register with NIXL
     buffer_ = allocate_registered_memory(total_size);
+    buffer_desc_ = nixl_register_buffer(endpoint_, buffer_, total_size);
 
     // 3. Initialize header
     auto* header = reinterpret_cast<BufferHeader*>(buffer_);
     header->num_agents = num_agents;
     header->agent_slots_offset = header_size;
     header->test_ctrl_offset = header_size + agent_slots_size;
-    header->results_offset = header_size + agent_slots_size + test_ctrl_size;
+    header->notification_offset = header_size + agent_slots_size + test_ctrl_size;
+    header->results_offset = header_size + agent_slots_size + test_ctrl_size + notification_size;
     header->ready_flag = 0;
 
     // 4. Initialize test command to IDLE
@@ -1357,12 +1471,39 @@ void Controller::initialize(uint32_t num_agents) {
     cmd->command_seq = 0;
     cmd->command_type = CommandType::IDLE;
 
-    // 5. Serialize NIXL endpoint + buffer metadata
-    nixl_endpoint_blob_ = serialize_endpoint();
-    buffer_blob_ = serialize_buffer_descriptor(buffer_, total_size);
+    // 5. Serialize NIXL endpoint + buffer metadata for agents
+    string endpoint_b64 = base64_encode(serialize_endpoint(endpoint_));
+    string buffer_b64 = base64_encode(serialize_buffer(buffer_desc_));
 
-    // 6. Start TCP listener for initial handshake ONLY
-    start_tcp_listener(listen_port_);
+    // 6. Initialize notifiers for agent status slots
+    initialize_notifications();
+
+    // 7. Spawn agent containers via orchestrator
+    spawn_agents(endpoint_b64, buffer_b64);
+}
+
+void Controller::spawn_agents(const string& endpoint_b64, const string& buffer_b64) {
+    LOG_INFO("Spawning {} agent containers", num_agents_);
+
+    for (uint32_t i = 0; i < num_agents_; i++) {
+        map<string, string> env_vars = {
+            {"CTRL_ENDPOINT", endpoint_b64},
+            {"CTRL_BUFFER", buffer_b64},
+            {"AGENT_ID", std::to_string(i)},
+            {"AGENT_SLOT_OFFSET", std::to_string(get_agent_slot_offset(i))},
+            {"NUM_AGENTS", std::to_string(num_agents_)}
+        };
+
+        orchestrator_->spawn_agent(i, env_vars);
+        LOG_DEBUG("Spawned agent {} container", i);
+    }
+
+    // Wait for containers to start
+    if (!orchestrator_->wait_for_agents_running(SPAWN_TIMEOUT_MS)) {
+        throw std::runtime_error("Timeout waiting for agent containers to start");
+    }
+
+    LOG_INFO("All {} agent containers running", num_agents_);
 }
 ```
 
@@ -1370,63 +1511,89 @@ void Controller::initialize(uint32_t num_agents) {
 
 #### Rendezvous Protocol
 
-**TCP Handshake (one-time per agent):**
+**No TCP required.** Controller passes NIXL metadata via environment variables when spawning agent containers.
+
 ```
-Controller                              Agent
-    |                                      |
-    |<-------- TCP Connect ----------------|
-    |                                      |
-    |-- agent_id ------------------------->|  (assigned ID)
-    |-- nixl_endpoint_blob --------------->|  (controller's NIXL endpoint)
-    |-- buffer_blob ---------------------->|  (controller's buffer descriptor)
-    |                                      |
-    |         [TCP connection closed]      |
-    |                                      |
+┌─────────────────────────────────────────────────────────────────────┐
+│ CONTROLLER                              AGENTS                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│ 1. Initialize NIXL, allocate buffer                                 │
+│                                                                     │
+│ 2. Spawn agents via orchestrator with env vars:                     │
+│    CTRL_ENDPOINT=<base64>                                           │
+│    CTRL_BUFFER=<base64>                                             │
+│    AGENT_ID=0,1,2...                                                │
+│    AGENT_SLOT_OFFSET=<offset>                                       │
+│         │                                                           │
+│         └─────── Docker/K8s API ──────────────────▶ Containers start│
+│                                                                     │
+│ 3. Initialize notifiers for agent slots                             │
+│                                                    Agent initializes │
+│                                                    Parses env vars   │
+│                                                    Connects to ctrl  │
+│                                                           │         │
+│         ┌════════ NIXL Write ════════════════════════════┘         │
+│         ▼                                                           │
+│ 4. Receive notification: agent N registered                         │
+│    (repeat for all N agents)                                        │
+│                                                                     │
+│ 5. All agents registered → set ready_flag                           │
+│    Notify all agents: RENDEZVOUS_COMPLETE                           │
+│         │                                                           │
+│         └════════ NIXL Write (notifications) ══════▶ Agents wake    │
+│                                                      Read peer data │
+│                                                      Enter event loop│
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**NIXL Rendezvous (after TCP handshake):**
-```
-Controller                              Agent
-    |                                      |
-    | (polls agent slots)                  | (deserializes blobs)
-    |                                      |
-    |<== NIXL Write (agent metadata) ======|  (agent writes to its slot)
-    |                                      |
-    | (detects populated_flag)             |
-    |                                      |
-```
-
-**Rendezvous Completion:**
+**Rendezvous Completion (Notification-Based):**
 ```cpp
 void Controller::wait_for_rendezvous() {
-    while (true) {
-        bool all_populated = true;
-        for (uint32_t i = 0; i < num_agents_; i++) {
-            auto* slot = get_agent_slot(i);
-            if (slot->populated_flag == 0) {
-                all_populated = false;
-                break;
+    std::set<uint32_t> pending;
+    for (uint32_t i = 0; i < num_agents_; i++) {
+        pending.insert(i);
+    }
+
+    auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(RENDEZVOUS_TIMEOUT_MS);
+
+    while (!pending.empty()) {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            throw std::runtime_error("Rendezvous timeout: agents not registered");
+        }
+
+        auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - now).count();
+
+        // Wait for notifications from agent slot writes
+        bool any_notified = wait_any_agent_notification(pending, remaining_ms);
+
+        if (any_notified) {
+            // Check which agents have populated their slots
+            for (auto it = pending.begin(); it != pending.end(); ) {
+                uint32_t id = *it;
+                auto* slot = get_agent_slot(id);
+                if (slot->populated_flag != 0) {
+                    LOG_INFO("Agent {} registered", id);
+                    it = pending.erase(it);
+                } else {
+                    ++it;
+                }
             }
         }
-        if (all_populated) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // Signal ready via NIXL (agents poll this)
+    LOG_INFO("All {} agents registered, completing rendezvous", num_agents_);
+
+    // Set ready flag
     auto* header = get_header();
     header->ready_flag = 1;
-}
 
-// Agent side: poll for ready_flag
-void Agent::wait_for_ready() {
-    while (true) {
-        uint64_t ready = nixl_read_u64(controller_buffer_,
-                                        offsetof(BufferHeader, ready_flag));
-        if (ready != 0) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    // Now read all peer metadata from agent slots
-    read_peer_metadata();
+    // Notify all agents that rendezvous is complete
+    notify_all_agents(NotificationType::RENDEZVOUS_COMPLETE);
 }
 ```
 
@@ -1450,7 +1617,7 @@ struct TestCommand {
 };
 ```
 
-#### Test Orchestration Flow (NIXL Only)
+#### Test Orchestration Flow (Notification-Based)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -1458,47 +1625,50 @@ struct TestCommand {
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │ 1. Write TestCommand:                                               │
-│    command_seq++                        (polling test_ctrl region)  │
+│    command_seq++                        (waiting on notification)   │
 │    command_type = CONFIGURE                     │                   │
 │    test_config = {...}                          │                   │
 │    active_pairs = [(0,1)]                       │                   │
 │         │                                       │                   │
 │         └──────── NIXL buffer ─────────────────▶│                   │
+│    Notify all agents: COMMAND_READY             │                   │
+│         └════════ NIXL notify ═════════════════▶│                   │
 │                                                 ▼                   │
-│                                         2. Agents detect new seq    │
+│                                         2. Agents wake on notify    │
 │                                            Read test_config         │
 │                                            If in active_pairs:      │
 │                                              Prepare buffers        │
 │                                              Write status = READY   │
-│                                              Write last_ack_seq     │
-│         ┌──────── NIXL buffer ◀────────────────┘                   │
+│         ┌════════ NIXL notify ◀════════════════┘                   │
 │         ▼                                                           │
-│ 3. Poll agent status slots                                          │
+│ 3. Receive status notifications                                     │
 │    Wait for all active agents READY                                 │
 │         │                                                           │
 │ 4. Write TestCommand:                                               │
 │    command_seq++                                                    │
 │    command_type = START                         │                   │
-│         │                                       │                   │
-│         └──────── NIXL buffer ─────────────────▶│                   │
+│    Notify active pair: COMMAND_READY            │                   │
+│         └════════ NIXL notify ═════════════════▶│                   │
 │                                                 ▼                   │
-│                                         5. Active agents:           │
+│                                         5. Active agents wake:      │
 │                                            Write status = RUNNING   │
 │                                            Execute test             │
 │                                            Write status = DONE      │
-│         ┌──────── NIXL buffer ◀────────────────┘                   │
+│         ┌════════ NIXL notify ◀════════════════┘                   │
 │         ▼                                                           │
-│ 6. Poll for DONE status                                             │
+│ 6. Receive DONE notifications                                       │
 │         │                                                           │
 │ 7. Write TestCommand:                                               │
 │    command_type = COLLECT                       │                   │
-│         └──────── NIXL buffer ─────────────────▶│                   │
+│    Notify all agents: COMMAND_READY             │                   │
+│         └════════ NIXL notify ═════════════════▶│                   │
 │                                                 ▼                   │
-│                                         8. Agents write results     │
-│                                            to results region        │
-│         ┌──────── NIXL buffer ◀────────────────┘                   │
+│                                         8. Agents wake, write       │
+│                                            results to results region│
+│         ┌════════ NIXL notify ◀════════════════┘                   │
 │         ▼                                                           │
-│ 9. Read results from results region                                 │
+│ 9. Receive completion notifications                                 │
+│    Read results from results region                                 │
 │    Process and store                                                │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
