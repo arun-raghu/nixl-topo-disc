@@ -4,3 +4,6 @@
 [submodule "submodules/ucx"]
 	path = submodules/ucx
 	url = https://github.com/openucx/ucx.git
+[submodule "submodules/gds"]
+	path = submodules/gds
+	url = https://github.com/NVIDIA/gds-nvidia-fs.git
