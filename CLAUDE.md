@@ -1601,7 +1601,7 @@ void Controller::wait_for_rendezvous() {
 
 ### 2.b Manage Performance Tests
 
-**All test orchestration uses NIXL memory - no TCP after rendezvous.**
+**All communication uses NIXL memory exclusively. No TCP/sockets anywhere in the system.**
 
 #### TestCommand Structure
 
@@ -2933,8 +2933,8 @@ cmake --build build --target unit_tests
 | Failure | Detection | Impact | Recovery |
 |---------|-----------|--------|----------|
 | Agent crash mid-test | Heartbeat timeout | Test pair incomplete | Skip pair, continue with remaining |
-| Agent crash during rendezvous | TCP disconnect / slot not populated | Rendezvous hangs | Timeout, abort or continue with N-1 |
-| Controller crash | Agents poll indefinitely | All state lost | Agents must restart (no recovery) |
+| Agent crash during rendezvous | Slot not populated / container exit | Rendezvous hangs | Timeout, abort or continue with N-1 |
+| Controller crash | Agents wait on notifications indefinitely | All state lost | Agents must restart (no recovery) |
 | NIXL transfer failure | `nixl_wait()` returns error | Single operation fails | Retry with backoff, then mark pair failed |
 | Network partition | Heartbeat timeout | Subset of agents unreachable | Graceful degradation, test reachable pairs |
 
@@ -3321,23 +3321,27 @@ enum class ErrorCode : uint32_t {
 #### Authentication
 
 ```cpp
-// Shared secret authentication during TCP handshake
-struct HandshakeRequest {
-    uint32_t protocol_version;
-    uint8_t auth_token[32];       // HMAC-SHA256 of shared secret + timestamp
-    uint64_t timestamp_ns;
-    uint8_t agent_nonce[16];
+// Shared secret authentication via environment variable
+// Controller generates unique token per agent, passes via env var
+
+// Agent receives auth token at container startup
+struct AgentAuthConfig {
+    uint8_t auth_token[32];       // HMAC-SHA256 of shared secret + agent_id
+    uint64_t token_expiry_ns;     // Token validity window
 };
 
-struct HandshakeResponse {
-    uint32_t agent_id;
-    uint8_t auth_response[32];    // HMAC of request + controller secret
-    // ... existing blob fields ...
+// Agent includes auth token when writing to controller buffer
+struct AuthenticatedMetadataSlot {
+    uint64_t populated_flag;
+    uint8_t auth_token[32];       // Must match expected token for this agent_id
+    uint8_t nixl_endpoint_blob[ENDPOINT_BLOB_SIZE];
+    uint8_t buffer_blob[BUFFER_BLOB_SIZE];
 };
 
 // Controller validates:
-// 1. Timestamp within acceptable window (prevent replay)
-// 2. auth_token matches expected HMAC
+// 1. auth_token matches expected HMAC for agent_id
+// 2. Token not expired
+// 3. Slot write came from expected agent (prevents slot hijacking)
 ```
 
 #### Data Integrity
@@ -3357,7 +3361,7 @@ struct AgentMetadataSlot {
 #### Access Control
 
 ```cpp
-// Agent capability flags (controller assigns during handshake)
+// Agent capability flags (controller assigns at container spawn via env var)
 enum AgentCapability : uint32_t {
     CAP_RUN_TESTS = 1 << 0,       // Can participate in tests
     CAP_UPLOAD_RESULTS = 1 << 1,  // Can write to results region
@@ -3494,19 +3498,26 @@ constexpr uint32_t CURRENT_PROTOCOL_VERSION = PROTOCOL_VERSION_1_0;
 **Version negotiation:**
 
 ```cpp
-// During TCP handshake
-struct HandshakeRequest {
-    uint32_t min_protocol_version;  // Oldest version agent supports
-    uint32_t max_protocol_version;  // Newest version agent supports
-    // ...
-};
+// Controller passes protocol version via environment variable
+// Agent validates compatibility at startup
 
-struct HandshakeResponse {
-    uint32_t negotiated_version;    // Controller picks within range
-    // ...
-};
+// Environment variable set by controller:
+//   PROTOCOL_VERSION=65536  (1.0 as uint32)
 
-// Agent validates negotiated_version is acceptable
+void Agent::validate_protocol_version() {
+    uint32_t controller_version = std::stoul(std::getenv("PROTOCOL_VERSION"));
+    uint32_t controller_major = controller_version >> 16;
+    uint32_t agent_major = CURRENT_PROTOCOL_VERSION >> 16;
+
+    if (controller_major != agent_major) {
+        LOG_ERROR("Protocol version mismatch: controller={}.{}, agent={}.{}",
+                  controller_major, controller_version & 0xFFFF,
+                  agent_major, CURRENT_PROTOCOL_VERSION & 0xFFFF);
+        throw std::runtime_error("Incompatible protocol version");
+    }
+
+    LOG_INFO("Protocol version {} validated", controller_version);
+}
 ```
 
 ---
@@ -3665,5 +3676,5 @@ nixl-topo-disc/
 - **Build System:** CMake
 - **Dependencies:**
   - NVIDIA NIXL SDK
-  - POSIX sockets (for minimal TCP bootstrap handshake only)
+  - Container orchestrator SDK (Docker SDK or Kubernetes client library)
   - (Optional) nlohmann/json for serialization
