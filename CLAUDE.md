@@ -3461,7 +3461,7 @@ TopologyGraph build_topology(const LatencyMatrix& L, const BandwidthMatrix& B) {
 ## Module Structure
 
 ```
-topo-disc/
+nixl-topo-disc/
 ├── src/
 │   ├── agent/
 │   │   ├── agent_main.cpp
