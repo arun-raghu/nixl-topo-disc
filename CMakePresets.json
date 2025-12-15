@@ -1,0 +1,160 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 18,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "debug",
+            "displayName": "Debug",
+            "description": "Debug build with all components",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BUILD_TESTS": "ON",
+                "BUILD_DEPS_FROM_SOURCE": "ON"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release",
+            "description": "Optimized release build",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_TESTS": "OFF",
+                "BUILD_DEPS_FROM_SOURCE": "ON"
+            }
+        },
+        {
+            "name": "dev",
+            "displayName": "Development",
+            "description": "Development build with sanitizers",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BUILD_TESTS": "ON",
+                "ENABLE_SANITIZERS": "ON",
+                "BUILD_DEPS_FROM_SOURCE": "ON"
+            }
+        },
+        {
+            "name": "agent-only",
+            "displayName": "Agent Only",
+            "description": "Build only the agent component",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_AGENT": "ON",
+                "BUILD_CONTROLLER": "OFF",
+                "BUILD_TOPOLOGY": "OFF",
+                "BUILD_HARNESS": "OFF",
+                "BUILD_TESTS": "OFF"
+            }
+        },
+        {
+            "name": "controller-only",
+            "displayName": "Controller Only",
+            "description": "Build only the controller component",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_AGENT": "OFF",
+                "BUILD_CONTROLLER": "ON",
+                "BUILD_TOPOLOGY": "OFF",
+                "BUILD_HARNESS": "OFF",
+                "BUILD_TESTS": "OFF"
+            }
+        },
+        {
+            "name": "cuda",
+            "displayName": "CUDA Enabled",
+            "description": "Build with CUDA and GDR support",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "ENABLE_CUDA": "ON",
+                "WITH_GDR": "ON",
+                "WITH_GDS": "ON",
+                "BUILD_DEPS_FROM_SOURCE": "ON"
+            }
+        },
+        {
+            "name": "system-deps",
+            "displayName": "System Dependencies",
+            "description": "Use pre-installed system dependencies",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_DEPS_FROM_SOURCE": "OFF"
+            }
+        },
+        {
+            "name": "minimal",
+            "displayName": "Minimal Build",
+            "description": "Minimal build without optional dependencies",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "WITH_NIXL": "OFF",
+                "WITH_UCX": "OFF",
+                "WITH_GDR": "OFF",
+                "WITH_GDS": "OFF",
+                "BUILD_TESTS": "OFF"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "release",
+            "configurePreset": "release"
+        },
+        {
+            "name": "dev",
+            "configurePreset": "dev"
+        },
+        {
+            "name": "agent-only",
+            "configurePreset": "agent-only"
+        },
+        {
+            "name": "controller-only",
+            "configurePreset": "controller-only"
+        },
+        {
+            "name": "cuda",
+            "configurePreset": "cuda"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "dev",
+            "configurePreset": "dev",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
+}
