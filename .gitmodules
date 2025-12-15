@@ -1,3 +1,6 @@
 [submodule "submodules/nixl"]
 	path = submodules/nixl
 	url = https://github.com/ai-dynamo/nixl.git
+[submodule "submodules/ucx"]
+	path = submodules/ucx
+	url = https://github.com/openucx/ucx.git
