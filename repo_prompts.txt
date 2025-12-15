@@ -1,0 +1,4 @@
+Be a software developer
+
+1. Create a new private repo nixl-topo-disc in github/arun-raghu
+2. Add NVidia nixl, gds, gdr and ucx repositories as sub-modules, such that current project can track latest code from each repo as needed

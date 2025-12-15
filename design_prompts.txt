@@ -1,0 +1,64 @@
+Be a software architect
+
+1. Create Design
+- Design an agent that will run on multiple nodes in a cluster. The agent exchanges in-memory data with peer agents using NVidia NIXL framework, to measure memory transfer performance between nodes. 
+  Split the design into the following sections - 
+  1. Agent Design: a.bootstrap b. inter-agent communication via NIXL c. memory performance test suite d. Persisting performance data 
+  2. Controller: a. startup and agent rendezvous using NIXL b. manage performance tests (kickoff, completion) c. Collect and collate perf data
+  3. Topology discovery: a. Graph construction b. [Graph vizualization]
+  4. Test Harness: a. Setup simulated test environment
+
+  There will be separate modules to implement each design section.
+  How agents bootstrap
+  1) Redezvous: Controller starts at well known IP/port, registers a mem buffer with NIXL
+    a) Controller is started with number of agents for given performance test
+    b) Allocs buffer with size that scales with num agents (Each agent gets a 'slot' in this buffer)
+    c) Writes number of agents at offset 0 in buffer (this will be used by agents to learn number of peers)
+    d) Serializes its registered buffer & its NIXL endpoint metadata into blobs.
+    e) Listens for agent connections
+    f) When agent connects, Controller sends it the blobs and also its agent ID
+    g) Agent uses this ID to decide the offset in the controller buffer in which to write 
+    h) Each agent writes its NIXL endpoint metadata + buffer blob into its slot in the buffer
+    Once every agent connects and completes this step, the Controller buffer contains all the information needed for any agent to talk with another peer
+
+Write this design into this project's CLAUDE.md. We will work on this design step-by-step. Just create placeholders for sections 3 & 4 that I have not described yet.
+This is a C++ project
+
+2. create the design section on memory performance test now
+- Goal 1: measure and characterize inter-node memory transfer performance.
+- Use OSU micro-benchmark (OMB) as reference. Identify minimum set of tests to measure latency, throughput, transfer time.
+- Goal 2: infer node topology via mem performance tests. Determine minimum set of tests for this.
+- Work with me step-by-step to design the tests in phases. First, just the minimum test(s) to detect topology. Next, design other tests for goal 1.
+  Follow the phased approach during implementation as well.
+  Remember to pin threads, use 0-copy unless its not possible (flag such cases to tester in the logs).
+
+2.a) replace RDMA with NIXL transfers in the design. will the design still work correctly?
+
+3. create the design section for the graph construction algorithm
+  Goal: infer node topology via mem perf tests described in mem perf tests section. i.e. create approximate real interconnect topology using collected perf data
+  Create an algorithn to construct a graph G(V, HV, E) where V = nodes in cluster HV:virtual nodes created between nodes that represent hidden bottlenecks discovered, E = edges connecting V or HV nodes, labeled with link capacity or bandwidth
+
+3.a) Double check that all the data that the graph construction algo requires is being collected by earlier memory performance tests.
+3.b) Confirm that the topology algo described in 1.c mem perf test suite does not contradict section 3 graph construction algo. Ideally describe algo in only one sub-section to avoid errors
+3.c) Check that the perf data collected and graph construction algo are phased such that one can collect a minimal set of perf data to get first cut topology information. Then as more perf data collected, richer topology graph can be created. This can be useful to significantly cut perf data collection runs to get quick topology overview very quickly.
+3.d) Ensure design of controller test management and communication uses NIXL mem. i.e. do NOT use any mechanism other than NIXL memory for all communication and setup of perf tests. Discuss with me what our design
+  options are? 1 option I can think of is to use a separate buffer at the controller. If yes, metadata for controller endpoint & test communication  buffer can also be added into the earlier designed controller buffer
+  holding all agent metadata/buffer information. With this, any agent can participate in perf tests by examining this controller test communication buffer
+3.e) Does the test control buffer create any complications if we wish to run multiple concurrent tests?
+
+3.f) Check design of agent buffer creation logic again. is it sufficient to handle all tests? Are there any tests where multiple agents might be transferring data to one agent simultaneously? Is more than one buffer needed?
+Also, lets revisit if an agent should alloc, register buffer upfront? or if buffers can be alloced as needed for specific test runs. Better for mem mgmt, but will then require participating agents to synchronize properly to get buffer metadata from controller for the given test. lets discuss options and avoid complicating this too much  
+
+4. revisit design section on persising test results from agents. Are the defined structures sufficient? Does each test agent upload data after a test run OR after controller informs it to send test results (potentially
+  after ALL tests are done)? If latter, is there sufficient information in each result for the controller to correctly organize the data? Discuss options with me. Next confirm that the data persisted by controller is
+  in a format that meets the needs of the graph creation algorithms.
+
+5. Test harness:
+  - create minimal design for agents/controllers to be deployed in containers.
+  - Later phase: use docker compose (or other means) to create/attach NICs of different speeds to each container. Optionally rate-limit NICs as well to create different scenarios.
+
+6. add error handling section to design.
+
+7. current agent/controller use busy-polling for communication. update this to use NIXL notification mechanisms for async operations with callbacks
+
+8. Evaluate the overall design. Comment if any important aspects are not being considered.
