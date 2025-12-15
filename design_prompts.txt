@@ -62,3 +62,17 @@ Also, lets revisit if an agent should alloc, register buffer upfront? or if buff
 7. current agent/controller use busy-polling for communication. update this to use NIXL notification mechanisms for async operations with callbacks
 
 8. Evaluate the overall design. Comment if any important aspects are not being considered.
+
+9. revisit the agent bootstrap mechanism. Modify design so that the controller kicks off all the
+  agents. This will allow the controller to pass its NIXL endpoint metadata and controller
+  communication buffer metadata as startup arguments to each agent it kicks off. Now there is no need
+  for the initial handshake over TCP sockets! Discuss with me if there are any issues with this
+  approach?
+
+10. Prompt to create initial design document for sanity check
+create a system design document in PDF. Show components in block diagrams. Seq diagrams for agent
+  controller communication patterns. High level description of perf tests (noting the staged
+  approach). Topology creation algo with 1-2 examples (inputs/output graph). Test harness figures. I
+  only want visuals and 2-3 sentences for someone to get overview of all design choices. Overall doc
+  should be 5-6 pages
+  After this add a short para describing my next steps based on implementation roadmap. not more than 3-4 lines/bullet points
