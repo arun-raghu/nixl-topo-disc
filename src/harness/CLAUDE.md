@@ -1,0 +1,1 @@
+reference @docs/test_harness.md for design of the test harness

@@ -1,0 +1,1 @@
+See @docs/topology.md for design of topology construction
