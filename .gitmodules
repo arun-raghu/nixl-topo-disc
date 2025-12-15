@@ -7,3 +7,6 @@
 [submodule "submodules/gds"]
 	path = submodules/gds
 	url = https://github.com/NVIDIA/gds-nvidia-fs.git
+[submodule "submodules/gdr"]
+	path = submodules/gdr
+	url = https://github.com/NVIDIA/gdrcopy.git
