@@ -109,7 +109,6 @@ Each agent runs as a container spawned by the Controller via an orchestrator (Do
 | `CTRL_ENDPOINT` | Base64-encoded controller NIXL endpoint blob |
 | `CTRL_BUFFER` | Base64-encoded controller buffer descriptor |
 | `AGENT_ID` | Assigned agent ID (0, 1, 2, ...) |
-| `AGENT_SLOT_OFFSET` | Byte offset of this agent's slot in controller buffer |
 | `NUM_AGENTS` | Total number of agents |
 
 **Startup Sequence:**
@@ -120,12 +119,14 @@ Each agent runs as a container spawned by the Controller via an orchestrator (Do
 4. Allocate and register test buffer (see buffer design below)
 5. Serialize own NIXL endpoint metadata + buffer descriptor
 6. Connect to controller's NIXL endpoint (using decoded metadata)
-7. Write own endpoint + buffer blobs into assigned slot via NIXL transfer
-8. Initialize notifier watching own notification slot
-9. Wait for RENDEZVOUS_COMPLETE notification from Controller
-10. Read all peer endpoint metadata from Controller buffer
-11. Establish NIXL connections to all peer agents
-12. Enter event loop (notification-driven, waiting for commands)
+7. Read `BufferHeader` from controller buffer to get region offsets
+8. Compute all slot offsets (metadata, status, notification, results)
+9. Write own endpoint + buffer blobs into metadata slot via NIXL transfer
+10. Initialize notifier watching own notification slot
+11. Wait for RENDEZVOUS_COMPLETE notification from Controller
+12. Read all peer endpoint metadata from Controller buffer
+13. Establish NIXL connections to all peer agents
+14. Enter event loop (notification-driven, waiting for commands)
 
 ### 1.b Inter-Agent Communication via NIXL
 
@@ -211,6 +212,12 @@ class Agent {
     };
     vector<PeerInfo> peers_;
 
+    // Computed offsets in controller buffer
+    size_t metadata_offset_;
+    size_t status_offset_;
+    size_t notification_offset_;
+    size_t results_offset_;
+
 public:
     void initialize(const AgentConfig& config) {
         config_ = config;
@@ -235,26 +242,28 @@ public:
         // 4. Connect to controller endpoint (using metadata from env vars)
         connect_to_controller();
 
-        // 5. Write our metadata to controller buffer via NIXL
+        // 5. Read header and compute all slot offsets
+        read_header_and_compute_offsets();
+
+        // 6. Write our metadata to controller buffer via NIXL
         write_metadata_to_controller();
 
-        // 6. Initialize notifications and wait for rendezvous completion
+        // 7. Initialize notifications and wait for rendezvous completion
         initialize_notifications();
         wait_for_rendezvous_notification();
 
-        // 7. Read all peer metadata
+        // 8. Read all peer metadata
         read_peer_metadata();
 
-        // 8. Enter event loop (notification-driven)
+        // 9. Enter event loop (notification-driven)
         event_loop();
     }
 
 private:
     void parse_env_vars() {
-        // Parse agent ID
+        // Parse agent ID and count
         my_id_ = std::stoul(std::getenv("AGENT_ID"));
         num_agents_ = std::stoul(std::getenv("NUM_AGENTS"));
-        slot_offset_ = std::stoull(std::getenv("AGENT_SLOT_OFFSET"));
 
         // Decode controller NIXL metadata from base64
         std::string ctrl_endpoint_b64 = std::getenv("CTRL_ENDPOINT");
@@ -270,6 +279,22 @@ private:
         // Establish NIXL connection to controller using pre-parsed metadata
         nixl_connect(endpoint_, controller_endpoint_);
         LOG_INFO("Agent {} connected to controller via NIXL", my_id_);
+    }
+
+    void read_header_and_compute_offsets() {
+        // Read BufferHeader from controller buffer to get region offsets
+        BufferHeader header;
+        nixl_read(controller_endpoint_, controller_buffer_desc_,
+                  0, &header, sizeof(header));
+
+        // Compute this agent's specific slot offsets
+        metadata_offset_ = header.agent_slots_offset + (my_id_ * AGENT_SLOT_SIZE);
+        status_offset_ = header.test_ctrl_offset + sizeof(TestCommand) + (my_id_ * AGENT_STATUS_SIZE);
+        notification_offset_ = header.notification_offset + (my_id_ * NOTIFICATION_SLOT_SIZE);
+        results_offset_ = header.results_offset + (my_id_ * AGENT_RESULT_SIZE);
+
+        LOG_INFO("Agent {} offsets computed: metadata={}, status={}, notification={}, results={}",
+                 my_id_, metadata_offset_, status_offset_, notification_offset_, results_offset_);
     }
 
     void wait_for_rendezvous_notification() {
@@ -1490,9 +1515,9 @@ void Controller::spawn_agents(const string& endpoint_b64, const string& buffer_b
             {"CTRL_ENDPOINT", endpoint_b64},
             {"CTRL_BUFFER", buffer_b64},
             {"AGENT_ID", std::to_string(i)},
-            {"AGENT_SLOT_OFFSET", std::to_string(get_agent_slot_offset(i))},
             {"NUM_AGENTS", std::to_string(num_agents_)}
         };
+        // Note: Agent computes its own slot offsets by reading BufferHeader
 
         orchestrator_->spawn_agent(i, env_vars);
         LOG_DEBUG("Spawned agent {} container", i);
@@ -1524,7 +1549,7 @@ void Controller::spawn_agents(const string& endpoint_b64, const string& buffer_b
 │    CTRL_ENDPOINT=<base64>                                           │
 │    CTRL_BUFFER=<base64>                                             │
 │    AGENT_ID=0,1,2...                                                │
-│    AGENT_SLOT_OFFSET=<offset>                                       │
+│    NUM_AGENTS=N                                                     │
 │         │                                                           │
 │         └─────── Docker/K8s API ──────────────────▶ Containers start│
 │                                                                     │
@@ -1532,8 +1557,10 @@ void Controller::spawn_agents(const string& endpoint_b64, const string& buffer_b
 │                                                    Agent initializes │
 │                                                    Parses env vars   │
 │                                                    Connects to ctrl  │
+│                                                    Reads BufferHeader│
+│                                                    Computes offsets  │
 │                                                           │         │
-│         ┌════════ NIXL Write ════════════════════════════┘         │
+│         ┌════════ NIXL Write (metadata) ═══════════════════┘        │
 │         ▼                                                           │
 │ 4. Receive notification: agent N registered                         │
 │    (repeat for all N agents)                                        │
