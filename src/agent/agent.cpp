@@ -1,6 +1,7 @@
 #include "agent.hpp"
 #include "../common/types.hpp"
 #include "../common/memory.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
@@ -124,6 +125,7 @@ bool Agent::initialize() {
     // Store offsets
     ctrl_agent_slots_offset_ = header.agent_slots_offset;
     ctrl_notification_offset_ = header.notification_offset;
+    ctrl_result_offset_ = header.result_offset;
 
     initialized_ = true;
     return true;
@@ -427,8 +429,198 @@ void Agent::shutdown() {
     ctrl_buffer_base_addr_ = 0;
     ctrl_agent_slots_offset_ = 0;
     ctrl_notification_offset_ = 0;
+    ctrl_result_offset_ = 0;
+    last_command_seq_ = 0;
     initialized_ = false;
     rendezvous_complete_ = false;
+}
+
+bool Agent::poll_and_execute_command() {
+    if (!rendezvous_complete_) return false;
+
+    // Get pointer to command inbox in our buffer
+    uint8_t* inbox = static_cast<uint8_t*>(test_buffer_) + AGENT_COMMAND_INBOX_OFFSET;
+
+    // Read command (already in our local memory, written by controller via RDMA)
+    TestCommand cmd;
+    std::memcpy(&cmd, inbox, sizeof(cmd));
+    cmd.from_wire();
+
+    // Check if new command
+    if (cmd.command_seq == 0 || cmd.command_seq <= last_command_seq_) {
+        return false;  // No new command
+    }
+
+    std::cout << "Agent " << agent_id_ << ": Received command seq=" << cmd.command_seq
+              << " type=" << static_cast<int>(cmd.command_type)
+              << " role=" << static_cast<int>(cmd.role) << "\n";
+
+    last_command_seq_ = cmd.command_seq;
+
+    // Execute based on command type
+    if (cmd.command_type == CommandType::PING_PONG_LATENCY) {
+        TestResult result = execute_ping_pong(cmd);
+
+        // Only initiator reports result
+        if (cmd.role == TestRole::INITIATOR) {
+            report_result(result);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+TestResult Agent::execute_ping_pong(const TestCommand& cmd) {
+    TestResult result = {};
+    result.command_seq = cmd.command_seq;
+    result.agent_id = agent_id_;
+    result.status = TestStatus::RUNNING;
+
+    uint32_t total_iterations = cmd.warmup_iterations + cmd.iterations;
+    uint64_t peer_mailbox_addr = cmd.peer_buffer_addr + AGENT_MAILBOX_OFFSET;
+
+    // Our mailbox for receiving
+    uint8_t* my_mailbox = static_cast<uint8_t*>(test_buffer_) + AGENT_MAILBOX_OFFSET;
+    MailboxHeader* my_header = reinterpret_cast<MailboxHeader*>(my_mailbox);
+
+    // Send buffer (use beginning of test_buffer_)
+    uint8_t* send_buf = static_cast<uint8_t*>(test_buffer_);
+    MailboxHeader* send_header = reinterpret_cast<MailboxHeader*>(send_buf);
+
+    // Initialize send buffer with payload
+    size_t total_msg_size = sizeof(MailboxHeader) + cmd.message_size;
+    std::memset(send_buf, 0, total_msg_size);
+
+    // Latency tracking (for initiator)
+    std::vector<uint64_t> latencies;
+    if (cmd.role == TestRole::INITIATOR) {
+        latencies.reserve(cmd.iterations);
+    }
+
+    uint64_t my_last_seen_seq = my_header->sequence;  // Track what we've seen
+
+    std::cout << "Agent " << agent_id_ << ": Starting ping-pong test"
+              << " role=" << (cmd.role == TestRole::INITIATOR ? "INITIATOR" : "RESPONDER")
+              << " peer=" << cmd.peer_agent_id
+              << " iterations=" << cmd.iterations
+              << " warmup=" << cmd.warmup_iterations
+              << " msg_size=" << cmd.message_size << "\n";
+
+    if (cmd.role == TestRole::INITIATOR) {
+        // INITIATOR: send ping, wait for pong
+        for (uint32_t i = 0; i < total_iterations; ++i) {
+            bool is_warmup = (i < cmd.warmup_iterations);
+
+            // Prepare ping
+            send_header->sequence = i + 1;
+            send_header->timestamp_ns = 0;
+
+            auto start = std::chrono::steady_clock::now();
+
+            // Send ping to responder's mailbox
+            if (!nixl_.write_to_remote(peers_[cmd.peer_agent_id].nixl_name,
+                                       send_buf, peer_mailbox_addr, total_msg_size)) {
+                result.status = TestStatus::ERROR;
+                result.error_code = 1;  // Write failed
+                std::cerr << "Agent " << agent_id_ << ": Ping write failed at iteration " << i << "\n";
+                return result;
+            }
+
+            // Poll for pong in our mailbox
+            while (my_header->sequence <= my_last_seen_seq) {
+                // Busy-poll
+            }
+            my_last_seen_seq = my_header->sequence;
+
+            auto end = std::chrono::steady_clock::now();
+
+            if (!is_warmup) {
+                uint64_t rtt_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+                latencies.push_back(rtt_ns);
+            }
+        }
+
+        // Calculate statistics
+        result.iterations_completed = latencies.size();
+        result.total_bytes = cmd.message_size * cmd.iterations * 2;  // ping + pong
+
+        if (!latencies.empty()) {
+            result.min_latency_ns = *std::min_element(latencies.begin(), latencies.end());
+            result.max_latency_ns = *std::max_element(latencies.begin(), latencies.end());
+            uint64_t sum = 0;
+            for (auto lat : latencies) sum += lat;
+            result.avg_latency_ns = sum / latencies.size();
+        }
+        result.status = TestStatus::COMPLETE;
+
+        std::cout << "Agent " << agent_id_ << ": Ping-pong test complete"
+                  << " min=" << result.min_latency_ns << "ns"
+                  << " max=" << result.max_latency_ns << "ns"
+                  << " avg=" << result.avg_latency_ns << "ns\n";
+
+    } else {
+        // RESPONDER: wait for ping, send pong
+        for (uint32_t i = 0; i < total_iterations; ++i) {
+            // Poll for ping in our mailbox
+            while (my_header->sequence <= my_last_seen_seq) {
+                // Busy-poll
+            }
+            my_last_seen_seq = my_header->sequence;
+
+            // Send pong to initiator's mailbox
+            send_header->sequence = i + 1;
+            if (!nixl_.write_to_remote(peers_[cmd.peer_agent_id].nixl_name,
+                                       send_buf, peer_mailbox_addr, total_msg_size)) {
+                // Log error but continue
+                std::cerr << "Agent " << agent_id_ << ": Pong write failed at iteration " << i << "\n";
+            }
+        }
+        result.status = TestStatus::COMPLETE;
+        result.iterations_completed = total_iterations;
+
+        std::cout << "Agent " << agent_id_ << ": Responder completed " << total_iterations << " iterations\n";
+    }
+
+    return result;
+}
+
+bool Agent::report_result(const TestResult& result) {
+    // Compute result slot address in controller buffer
+    uintptr_t result_addr = ctrl_buffer_base_addr_ + ctrl_result_offset_ +
+                            (agent_id_ * TEST_RESULT_SIZE);
+
+    // Prepare result in wire format
+    TestResult wire_result = result;
+    wire_result.to_wire();
+
+    // Use registered buffer for RDMA write
+    std::memcpy(test_buffer_, &wire_result, sizeof(wire_result));
+
+    if (!nixl_.write_to_remote(controller_name_, test_buffer_, result_addr, sizeof(TestResult))) {
+        std::cerr << "Agent " << agent_id_ << ": Failed to write result to controller\n";
+        return false;
+    }
+
+    std::cout << "Agent " << agent_id_ << ": Reported result (seq=" << result.command_seq
+              << ", status=" << static_cast<int>(result.status)
+              << ", avg_latency=" << result.avg_latency_ns << "ns)\n";
+    return true;
+}
+
+void Agent::run_command_loop(volatile std::sig_atomic_t& shutdown_flag) {
+    std::cout << "Agent " << agent_id_ << ": Entering command loop\n";
+
+    while (!shutdown_flag) {
+        if (poll_and_execute_command()) {
+            // Command executed, check again immediately
+            continue;
+        }
+        // No command, sleep briefly
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+
+    std::cout << "Agent " << agent_id_ << ": Exiting command loop\n";
 }
 
 } // namespace nixl_topo

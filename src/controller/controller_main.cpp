@@ -5,16 +5,102 @@
 #include <csignal>
 #include <thread>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <vector>
+#include <map>
 
 namespace {
 
+std::vector<pid_t> g_child_pids;
+std::string g_agent_binary_path;
+
 void print_usage(const char* program_name) {
-    std::cerr << "Usage: " << program_name << " -n <num_agents> [-t <timeout_sec>]\n"
+    std::cerr << "Usage: " << program_name << " -n <num_agents> [-t <timeout_sec>] [-a <agent_path>]\n"
               << "\n"
               << "Options:\n"
               << "  -n <num_agents>   Number of agents to wait for (required)\n"
               << "  -t <timeout_sec>  Timeout in seconds for agent registration (default: 60)\n"
+              << "  -a <agent_path>   Path to agent binary (default: ./agent in same dir as controller)\n"
               << "  -h                Show this help message\n";
+}
+
+// Get directory containing the executable
+std::string get_exe_dir(const char* argv0) {
+    // Try /proc/self/exe first (Linux-specific)
+    char buf[4096];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len > 0) {
+        buf[len] = '\0';
+        std::string path(buf);
+        size_t pos = path.rfind('/');
+        if (pos != std::string::npos) {
+            return path.substr(0, pos);
+        }
+    }
+    // Fallback: use argv[0]
+    std::string path(argv0);
+    size_t pos = path.rfind('/');
+    if (pos != std::string::npos) {
+        return path.substr(0, pos);
+    }
+    return ".";
+}
+
+bool spawn_agent(uint32_t agent_id, const std::map<std::string, std::string>& env_vars) {
+    std::string log_file = "/tmp/agent_" + std::to_string(agent_id) + ".log";
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::cerr << "Failed to fork for agent " << agent_id << "\n";
+        return false;
+    }
+
+    if (pid == 0) {
+        // Child process
+
+        // Open log file for stdout/stderr
+        int log_fd = open(log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (log_fd < 0) {
+            std::cerr << "Failed to open log file: " << log_file << "\n";
+            _exit(1);
+        }
+
+        // Redirect stdout and stderr to log file
+        dup2(log_fd, STDOUT_FILENO);
+        dup2(log_fd, STDERR_FILENO);
+        close(log_fd);
+
+        // Set environment variables
+        for (const auto& [key, value] : env_vars) {
+            setenv(key.c_str(), value.c_str(), 1);
+        }
+
+        // Execute agent binary
+        execl(g_agent_binary_path.c_str(), "agent", nullptr);
+
+        // If exec fails
+        std::cerr << "Failed to exec agent: " << g_agent_binary_path << "\n";
+        _exit(1);
+    }
+
+    // Parent process
+    g_child_pids.push_back(pid);
+    std::cout << "  Spawned agent " << agent_id << " (PID: " << pid << ") -> " << log_file << "\n";
+    return true;
+}
+
+void terminate_agents() {
+    for (pid_t pid : g_child_pids) {
+        kill(pid, SIGTERM);
+    }
+    // Give them time to exit gracefully
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    for (pid_t pid : g_child_pids) {
+        int status;
+        waitpid(pid, &status, WNOHANG);
+    }
+    g_child_pids.clear();
 }
 
 volatile std::sig_atomic_t g_shutdown_requested = 0;
@@ -29,6 +115,7 @@ void signal_handler(int signal) {
 int main(int argc, char* argv[]) {
     uint32_t num_agents = 0;
     uint32_t timeout_sec = 60;
+    std::string agent_path;
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -46,6 +133,13 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             timeout_sec = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (std::strcmp(argv[i], "-a") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: -a requires an argument\n";
+                print_usage(argv[0]);
+                return 1;
+            }
+            agent_path = argv[++i];
         } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -59,6 +153,19 @@ int main(int argc, char* argv[]) {
     if (num_agents == 0) {
         std::cerr << "Error: -n <num_agents> is required and must be > 0\n";
         print_usage(argv[0]);
+        return 1;
+    }
+
+    // Determine agent binary path
+    if (agent_path.empty()) {
+        g_agent_binary_path = get_exe_dir(argv[0]) + "/agent";
+    } else {
+        g_agent_binary_path = agent_path;
+    }
+
+    // Verify agent binary exists
+    if (access(g_agent_binary_path.c_str(), X_OK) != 0) {
+        std::cerr << "Error: Agent binary not found or not executable: " << g_agent_binary_path << "\n";
         return 1;
     }
 
@@ -83,18 +190,19 @@ int main(int argc, char* argv[]) {
               << std::dec << "\n";
     std::cout << "Buffer size: " << controller.buffer().size() << " bytes\n";
 
-    // Print environment variables for each agent (full export commands)
-    std::cout << "\nEnvironment variables for agent spawning:\n";
-    std::cout << "==========================================\n";
+    // Spawn agent processes
+    std::cout << "\nSpawning " << num_agents << " agents...\n";
+    std::cout << "Agent binary: " << g_agent_binary_path << "\n";
     for (uint32_t i = 0; i < num_agents; ++i) {
         auto env_vars = controller.get_agent_env_vars(i);
-        std::cout << "\n# Agent " << i << " - copy and run these exports, then run agent:\n";
-        for (const auto& [key, value] : env_vars) {
-            // Print full export command (use single quotes to prevent shell interpretation)
-            std::cout << "export " << key << "='" << value << "'\n";
+        if (!spawn_agent(i, env_vars)) {
+            std::cerr << "Error: Failed to spawn agent " << i << "\n";
+            terminate_agents();
+            controller.shutdown();
+            return 1;
         }
     }
-    std::cout << "\n==========================================\n\n";
+    std::cout << "All agents spawned. Logs in /tmp/agent_*.log\n\n";
 
     // Wait for all agents to register
     std::cout << "Waiting for agents to register...\n";
@@ -121,6 +229,7 @@ int main(int argc, char* argv[]) {
                 }
             }
 
+            terminate_agents();
             controller.shutdown();
             return 1;
         }
@@ -139,6 +248,7 @@ int main(int argc, char* argv[]) {
 
     if (g_shutdown_requested) {
         std::cout << "\nShutdown requested, exiting...\n";
+        terminate_agents();
         controller.shutdown();
         return 0;
     }
@@ -155,6 +265,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\nShutting down controller...\n";
+    terminate_agents();
     controller.shutdown();
     std::cout << "Controller shutdown complete.\n";
 

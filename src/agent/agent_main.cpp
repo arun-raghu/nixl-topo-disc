@@ -71,6 +71,7 @@ int main() {
     }
     std::cout << "Peer discovery complete.\n";
 
+#ifdef ENABLE_PEER_TRANSFER_TEST
     // Verify data transfer with one peer (agent 0 tests with agent 1)
     if (agent.num_agents() > 1 && agent.agent_id() == 0) {
         uint32_t peer_id = 1;
@@ -81,12 +82,11 @@ int main() {
             std::cerr << "Data transfer verification FAILED with agent_" << peer_id << "\n";
         }
     }
+#endif
 
-    // Keep running until shutdown signal
-    std::cout << "Agent running. Press Ctrl+C to shutdown.\n";
-    while (!g_shutdown_requested) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
+    // Run command loop, waiting for test commands from controller
+    std::cout << "Agent running, waiting for commands...\n";
+    agent.run_command_loop(g_shutdown_requested);
 
     std::cout << "\nShutting down agent...\n";
     agent.shutdown();

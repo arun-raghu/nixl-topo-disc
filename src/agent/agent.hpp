@@ -1,8 +1,10 @@
 #pragma once
 
 #include "../common/nixl_wrapper.hpp"
+#include "../common/types.hpp"
 #include <cstdint>
 #include <chrono>
+#include <csignal>
 #include <string>
 #include <vector>
 
@@ -75,6 +77,25 @@ public:
     void* test_buffer() { return test_buffer_; }
     size_t test_buffer_size() const { return test_buffer_size_; }
 
+    /// Poll command inbox and execute if new command found.
+    /// @return true if a command was executed, false if no new command
+    bool poll_and_execute_command();
+
+    /// Run command polling loop until shutdown requested.
+    /// @param shutdown_flag Reference to shutdown flag (set by signal handler)
+    void run_command_loop(volatile std::sig_atomic_t& shutdown_flag);
+
+private:
+    /// Execute a ping-pong latency test.
+    /// @param cmd The test command (already converted from wire format)
+    /// @return TestResult with latency statistics
+    TestResult execute_ping_pong(const TestCommand& cmd);
+
+    /// Write result to controller's result slot (initiator only).
+    /// @param result The result to write
+    /// @return true on success
+    bool report_result(const TestResult& result);
+
 private:
     // Peer info discovered after rendezvous
     struct PeerInfo {
@@ -95,6 +116,10 @@ private:
     uint64_t ctrl_buffer_base_addr_ = 0;  // Controller's buffer base address for RDMA
     uint32_t ctrl_agent_slots_offset_ = 0;
     uint32_t ctrl_notification_offset_ = 0;
+    uint32_t ctrl_result_offset_ = 0;     // Result region offset in controller buffer
+
+    // Command tracking
+    uint64_t last_command_seq_ = 0;       // Last processed command sequence
 
     // Peer info discovered after rendezvous
     std::vector<PeerInfo> peers_;

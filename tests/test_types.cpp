@@ -174,12 +174,14 @@ TEST(BufferHeaderTest, Size_IsExpected) {
 TEST(AgentSlotTest, ToWire_ConvertHeaderFields) {
     AgentSlot slot;
     slot.populated_flag = 1;
+    slot.buffer_base_addr = 0x7FFF12340000;
     slot.metadata_size = 512;
     slot.reserved = 0;
 
     slot.to_wire();
 
     EXPECT_EQ(slot.populated_flag, to_wire64(1));
+    EXPECT_EQ(slot.buffer_base_addr, to_wire64(0x7FFF12340000));
     EXPECT_EQ(slot.metadata_size, to_wire32(512));
     EXPECT_EQ(slot.reserved, to_wire32(0));
 }
@@ -187,12 +189,14 @@ TEST(AgentSlotTest, ToWire_ConvertHeaderFields) {
 TEST(AgentSlotTest, FromWire_ConvertHeaderFields) {
     AgentSlot slot;
     slot.populated_flag = to_wire64(1);
+    slot.buffer_base_addr = to_wire64(0xABCD00001234);
     slot.metadata_size = to_wire32(1024);
     slot.reserved = to_wire32(0);
 
     slot.from_wire();
 
     EXPECT_EQ(slot.populated_flag, 1u);
+    EXPECT_EQ(slot.buffer_base_addr, 0xABCD00001234ULL);
     EXPECT_EQ(slot.metadata_size, 1024u);
     EXPECT_EQ(slot.reserved, 0u);
 }
@@ -200,6 +204,7 @@ TEST(AgentSlotTest, FromWire_ConvertHeaderFields) {
 TEST(AgentSlotTest, ToWire_FromWire_RoundTrip) {
     AgentSlot original;
     original.populated_flag = 1;
+    original.buffer_base_addr = 0x123456789ABCDEF0ULL;
     original.metadata_size = 2048;
     original.reserved = 0;
 
@@ -208,6 +213,7 @@ TEST(AgentSlotTest, ToWire_FromWire_RoundTrip) {
     converted.from_wire();
 
     EXPECT_EQ(converted.populated_flag, original.populated_flag);
+    EXPECT_EQ(converted.buffer_base_addr, original.buffer_base_addr);
     EXPECT_EQ(converted.metadata_size, original.metadata_size);
     EXPECT_EQ(converted.reserved, original.reserved);
 }
@@ -230,8 +236,8 @@ TEST(AgentSlotTest, MetadataPointer_NonConst) {
 }
 
 TEST(AgentSlotTest, HeaderSize_IsCorrect) {
-    // Header: populated_flag (8) + metadata_size (4) + reserved (4) = 16
-    EXPECT_EQ(AGENT_SLOT_HEADER_SIZE, 16u);
+    // Header: populated_flag (8) + buffer_base_addr (8) + metadata_size (4) + reserved (4) = 24
+    EXPECT_EQ(AGENT_SLOT_HEADER_SIZE, 24u);
 }
 
 TEST(AgentSlotTest, SlotSize_AccommodatesMetadata) {
@@ -282,7 +288,7 @@ TEST(NotificationTest, CanSetFields) {
 
 TEST(ConstantsTest, BufferSizes_AreReasonable) {
     EXPECT_EQ(DEFAULT_TEST_BUFFER_SIZE, 256 * 1024 * 1024);  // 256MB
-    EXPECT_EQ(MAX_METADATA_BLOB_SIZE, AGENT_SLOT_SIZE - AGENT_SLOT_HEADER_SIZE);  // 4080
+    EXPECT_EQ(MAX_METADATA_BLOB_SIZE, AGENT_SLOT_SIZE - AGENT_SLOT_HEADER_SIZE);  // 4072
     EXPECT_GE(MAX_METADATA_BLOB_SIZE, 4000u);  // At least ~4KB for metadata
     EXPECT_LE(MAX_METADATA_BLOB_SIZE, 65536u);  // Not more than 64KB
 }

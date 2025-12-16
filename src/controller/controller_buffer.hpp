@@ -61,6 +61,10 @@ public:
     /// Set the ready flag to signal rendezvous complete.
     void set_ready_flag();
 
+    /// Get pointer to agent result slot.
+    TestResult* result_slot(uint32_t agent_id);
+    const TestResult* result_slot(uint32_t agent_id) const;
+
 private:
     void* buffer_ = nullptr;
     size_t buffer_size_ = 0;
@@ -69,6 +73,7 @@ private:
     // Cached offsets in host format (header is stored in wire format for RDMA)
     uint32_t agent_slots_offset_ = 0;
     uint32_t notification_offset_ = 0;
+    uint32_t result_offset_ = 0;
 };
 
 } // namespace nixl_topo
