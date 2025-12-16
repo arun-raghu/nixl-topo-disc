@@ -34,10 +34,26 @@ target_link_libraries(topology PUBLIC
     $<$<BOOL:${WITH_JSON}>:nlohmann_json::nlohmann_json>
 )
 
+# =============================================================================
+# Visualization Tool
+# =============================================================================
+
+add_executable(topology_viz topology_viz.cpp)
+
+target_include_directories(topology_viz PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(topology_viz PRIVATE
+    nixl_topo::topology
+)
+
 # Installation
-install(TARGETS topology
+install(TARGETS topology topology_viz
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 install(FILES ${TOPOLOGY_HEADERS}
