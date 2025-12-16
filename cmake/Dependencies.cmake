@@ -6,6 +6,60 @@
 include(ExternalProject)
 include(FetchContent)
 
+# =============================================================================
+# Check for required build tools when building from source
+# =============================================================================
+if(BUILD_DEPS_FROM_SOURCE)
+    # UCX requires autotools
+    if(WITH_UCX)
+        find_program(AUTORECONF autoreconf)
+        find_program(AUTOMAKE automake)
+        find_program(LIBTOOLIZE NAMES libtoolize glibtoolize libtool)
+
+        if(NOT AUTORECONF)
+            message(FATAL_ERROR "autoreconf not found. Install autoconf:\n"
+                "  Ubuntu/Debian: sudo apt-get install autoconf\n"
+                "  RHEL/CentOS:   sudo yum install autoconf\n"
+                "  macOS:         brew install autoconf")
+        endif()
+        if(NOT AUTOMAKE)
+            message(FATAL_ERROR "automake not found. Install automake:\n"
+                "  Ubuntu/Debian: sudo apt-get install automake\n"
+                "  RHEL/CentOS:   sudo yum install automake\n"
+                "  macOS:         brew install automake")
+        endif()
+        if(NOT LIBTOOLIZE)
+            message(FATAL_ERROR "libtoolize not found. Install libtool:\n"
+                "  Ubuntu/Debian: sudo apt-get install libtool\n"
+                "  RHEL/CentOS:   sudo yum install libtool\n"
+                "  macOS:         brew install libtool")
+        endif()
+    endif()
+
+    # NIXL requires meson and ninja
+    if(WITH_NIXL)
+        find_program(MESON meson)
+        find_program(NINJA ninja)
+
+        if(NOT MESON)
+            message(FATAL_ERROR "meson not found. Install meson:\n"
+                "  Ubuntu/Debian: sudo apt-get install meson\n"
+                "  RHEL/CentOS:   sudo yum install meson\n"
+                "  pip:           pip install meson\n"
+                "  macOS:         brew install meson")
+        endif()
+        if(NOT NINJA)
+            message(FATAL_ERROR "ninja not found. Install ninja:\n"
+                "  Ubuntu/Debian: sudo apt-get install ninja-build\n"
+                "  RHEL/CentOS:   sudo yum install ninja-build\n"
+                "  pip:           pip install ninja\n"
+                "  macOS:         brew install ninja")
+        endif()
+    endif()
+
+    message(STATUS "Build tools found for building dependencies from source")
+endif()
+
 # Directory where built dependencies will be installed
 set(DEPS_INSTALL_DIR "${CMAKE_BINARY_DIR}/deps_install")
 file(MAKE_DIRECTORY ${DEPS_INSTALL_DIR})
@@ -38,6 +92,7 @@ if(WITH_UCX)
         set(UCX_INSTALL_DIR "${DEPS_INSTALL_DIR}/ucx")
 
         # UCX uses autotools, need to run autogen.sh first
+        # BUILD_IN_SOURCE TRUE because autogen.sh must run in source directory
         ExternalProject_Add(ucx_external
             SOURCE_DIR ${UCX_SOURCE_DIR}
             CONFIGURE_COMMAND ${UCX_SOURCE_DIR}/autogen.sh
@@ -47,15 +102,17 @@ if(WITH_UCX)
                     --disable-logging
                     --disable-debug
                     --disable-assertions
-                    $<$<BOOL:${ENABLE_CUDA}>:--with-cuda=${CUDAToolkit_LIBRARY_DIR}/..>
             BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
             INSTALL_COMMAND make install
-            BUILD_IN_SOURCE FALSE
+            BUILD_IN_SOURCE TRUE
             BUILD_BYPRODUCTS
                 ${UCX_INSTALL_DIR}/lib/libucp.so
                 ${UCX_INSTALL_DIR}/lib/libuct.so
                 ${UCX_INSTALL_DIR}/lib/libucs.so
         )
+
+        # Create directories so CMake validation passes
+        file(MAKE_DIRECTORY ${UCX_INSTALL_DIR}/include)
 
         # Create imported targets
         add_library(UCX::ucp SHARED IMPORTED GLOBAL)
@@ -155,30 +212,56 @@ if(WITH_NIXL)
         set(NIXL_BUILD_DIR "${CMAKE_BINARY_DIR}/nixl_build")
 
         # NIXL uses meson build system
+        set(NIXL_DEPENDS "")
+        if(WITH_UCX)
+            set(NIXL_DEPENDS ucx_external)
+        endif()
+
+        # Detect lib directory suffix (meson uses lib/x86_64-linux-gnu on some systems)
+        set(NIXL_LIB_SUFFIX "lib/x86_64-linux-gnu")
+
         ExternalProject_Add(nixl_external
             SOURCE_DIR ${NIXL_SOURCE_DIR}
             CONFIGURE_COMMAND meson setup ${NIXL_BUILD_DIR} ${NIXL_SOURCE_DIR}
                 --prefix=${NIXL_INSTALL_DIR}
-                --buildtype=$<IF:$<CONFIG:Debug>,debug,release>
+                --buildtype=release
                 -Ducx_path=${DEPS_INSTALL_DIR}/ucx
             BUILD_COMMAND meson compile -C ${NIXL_BUILD_DIR}
             INSTALL_COMMAND meson install -C ${NIXL_BUILD_DIR}
             BUILD_IN_SOURCE FALSE
-            BUILD_BYPRODUCTS ${NIXL_INSTALL_DIR}/lib/libnixl.so
-            DEPENDS $<$<BOOL:${WITH_UCX}>:ucx_external>
+            BUILD_BYPRODUCTS ${NIXL_INSTALL_DIR}/${NIXL_LIB_SUFFIX}/libnixl.so
+            DEPENDS ${NIXL_DEPENDS}
         )
 
-        # Create imported target
+        # Create directories so CMake validation passes
+        file(MAKE_DIRECTORY ${NIXL_INSTALL_DIR}/include)
+        file(MAKE_DIRECTORY ${NIXL_INSTALL_DIR}/${NIXL_LIB_SUFFIX})
+
+        # Create imported targets for NIXL component libraries
+        add_library(NIXL::nixl_build SHARED IMPORTED GLOBAL)
+        set_target_properties(NIXL::nixl_build PROPERTIES
+            IMPORTED_LOCATION ${NIXL_INSTALL_DIR}/${NIXL_LIB_SUFFIX}/libnixl_build.so
+        )
+        add_dependencies(NIXL::nixl_build nixl_external)
+
+        add_library(NIXL::nixl_common SHARED IMPORTED GLOBAL)
+        set_target_properties(NIXL::nixl_common PROPERTIES
+            IMPORTED_LOCATION ${NIXL_INSTALL_DIR}/${NIXL_LIB_SUFFIX}/libnixl_common.so
+        )
+        add_dependencies(NIXL::nixl_common nixl_external)
+
+        # Main NIXL library with dependencies
         add_library(NIXL::nixl SHARED IMPORTED GLOBAL)
         set_target_properties(NIXL::nixl PROPERTIES
-            IMPORTED_LOCATION ${NIXL_INSTALL_DIR}/lib/libnixl.so
+            IMPORTED_LOCATION ${NIXL_INSTALL_DIR}/${NIXL_LIB_SUFFIX}/libnixl.so
             INTERFACE_INCLUDE_DIRECTORIES ${NIXL_INSTALL_DIR}/include
+            INTERFACE_LINK_LIBRARIES "NIXL::nixl_build;NIXL::nixl_common"
         )
         add_dependencies(NIXL::nixl nixl_external)
 
         set(NIXL_FOUND TRUE)
         set(NIXL_INCLUDE_DIRS ${NIXL_INSTALL_DIR}/include)
-        set(NIXL_LIBRARIES ${NIXL_INSTALL_DIR}/lib/libnixl.so)
+        set(NIXL_LIBRARIES ${NIXL_INSTALL_DIR}/${NIXL_LIB_SUFFIX}/libnixl.so)
 
     else()
         # Find pre-installed NIXL
