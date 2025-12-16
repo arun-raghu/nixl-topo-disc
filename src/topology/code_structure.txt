@@ -1,0 +1,76 @@
+# Topology Module - Code Structure
+# Keep this file updated when modifying code in src/topology/
+
+## Source Files (src/topology/)
+
+| File                  | Purpose                                              |
+|-----------------------|------------------------------------------------------|
+| tier_config.hpp       | Enums (NodeType, HiddenNodeType, EdgeType, LinkageType), TierConfig struct, string conversion utilities |
+| tier_config.cpp       | JSON config file loading/saving via nlohmann/json    |
+| latency_matrix.hpp    | LatencyEntry struct, LatencyMatrix class declaration |
+| latency_matrix.cpp    | CSV parsing, matrix symmetrization, distance metric  |
+| dendrogram.hpp        | ClusterNode struct, Dendrogram class declaration     |
+| dendrogram.cpp        | Agglomerative hierarchical clustering algorithm      |
+| topology_graph.hpp    | PhysicalNode, HiddenNode, Edge, TopologyGraph class  |
+| topology_graph.cpp    | Graph management, export to adjacency list/DOT/JSON  |
+| topology_builder.hpp  | TopologyBuilder class declaration                    |
+| topology_builder.cpp  | Orchestrates: matrix -> dendrogram -> tier assignment -> graph |
+| CMakeLists.txt        | Build configuration for topology library             |
+| CLAUDE.md             | Reference to design docs                             |
+| code_structure.txt    | This file - documents module structure               |
+
+## Test Files (tests/)
+
+| File                  | Purpose                                              |
+|-----------------------|------------------------------------------------------|
+| test_topology.cpp     | Unit tests for LatencyMatrix, Dendrogram, TopologyBuilder, TopologyGraph |
+| test_data/            | Test CSV files for unit tests                        |
+
+## Test Data (tests/test_data/)
+
+| File                          | Purpose                                    |
+|-------------------------------|--------------------------------------------|
+| small_4node.csv               | 4x4 matrix, 2 clusters for basic tests     |
+| medium_8node.csv              | 8x8 matrix, hierarchical structure         |
+| edge_cases/single_node.csv    | 1x1 matrix edge case                       |
+| edge_cases/two_nodes.csv      | 2x2 matrix minimal clustering              |
+| edge_cases/identical_latencies.csv | Tests tie-breaking behavior           |
+| edge_cases/asymmetric.csv     | Tests matrix symmetrization                |
+
+## Dependencies
+
+| Dependency           | Purpose                                              |
+|----------------------|------------------------------------------------------|
+| src/common/types.hpp | Common type definitions (namespace nixl_topo)        |
+| nlohmann/json        | JSON config file parsing (via WITH_JSON CMake flag)  |
+
+## API Overview
+
+```cpp
+// Load latency matrix from CSV
+LatencyMatrix matrix = LatencyMatrix::from_csv("latency.csv");
+matrix.symmetrize();  // Optional: average L[i][j] and L[j][i]
+
+// Build topology with default config
+TopologyBuilder builder;
+TopologyGraph graph = builder.build(matrix);
+
+// Or load config from JSON
+TopologyBuilder builder = TopologyBuilder::from_config("config.json");
+TopologyGraph graph = builder.build(matrix);
+
+// Export results
+std::string adj_list = graph.to_adjacency_list();
+std::string dot = graph.to_dot();
+std::string json = graph.to_json();
+```
+
+## Algorithm Summary
+
+1. Parse CSV -> LatencyMatrix (NxN symmetric matrix)
+2. Build Dendrogram using single-linkage hierarchical clustering
+3. Cut dendrogram at tier thresholds (default: 5us, 15us, 50us)
+4. Assign tiers to physical nodes based on clustering
+5. Infer hidden nodes (switches) for each cluster
+6. Construct edges connecting physical nodes to hidden nodes
+7. Export graph in desired format

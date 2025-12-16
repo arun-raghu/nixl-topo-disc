@@ -2,8 +2,11 @@
 
 A C++ distributed agent system that measures memory transfer performance between cluster nodes using the NVIDIA NIXL framework.
 
-The docs directory contains .md files describing the overall project design
-
+- The docs directory contains several .md files describing the overall project design
+- for NIXL API info, use CLAUDE.md in submodules/nixl
+- for UCX API info, use CLAUDE.md in submodules/ucx
+- for GDS API info, use CLAUDE.md in submodules/gds
+- for GDR API info, use CLAUDE.md in submodules/gdr
 ---
 ## Module Structure
 
@@ -21,7 +24,12 @@ nixl-topo-disc/
 │   │   ├── test_manager.cpp
 │   │   └── data_collector.cpp
 │   ├── topology/
-│   │   └── [placeholder]
+│   │   ├── tier_config.hpp/cpp
+│   │   ├── latency_matrix.hpp/cpp
+│   │   ├── dendrogram.hpp/cpp
+│   │   ├── topology_graph.hpp/cpp
+│   │   ├── topology_builder.hpp/cpp
+│   │   └── code_structure.txt
 │   ├── harness/
 │   │   └── [placeholder]
 │   └── common/
@@ -44,3 +52,9 @@ nixl-topo-disc/
   - NVIDIA NIXL SDK
   - Container orchestrator SDK (Docker SDK or Kubernetes client library)
   - (Optional) nlohmann/json for serialization
+
+---
+
+## Topology Module
+
+When modifying code in `src/topology/`, update `src/topology/code_structure.txt` to reflect changes.

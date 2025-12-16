@@ -25,26 +25,7 @@ include(GoogleTest)
 # Test Sources
 # =============================================================================
 
-# Unit tests
-set(UNIT_TEST_SOURCES
-    # Add test files here as they are created
-    # test_protocol.cpp
-    # test_types.cpp
-    # test_topology.cpp
-)
-
-# Integration tests
-set(INTEGRATION_TEST_SOURCES
-    # Add test files here as they are created
-    # test_agent_controller.cpp
-    # test_nixl_comm.cpp
-)
-
-# =============================================================================
-# Create Test Executables (placeholder until test sources exist)
-# =============================================================================
-
-# For now, create a simple placeholder test
+# Placeholder test
 add_executable(test_placeholder
     ${CMAKE_CURRENT_SOURCE_DIR}/test_placeholder.cpp
 )
@@ -58,26 +39,41 @@ target_link_libraries(test_placeholder PRIVATE
 gtest_discover_tests(test_placeholder)
 
 # =============================================================================
-# When actual test files are added, uncomment:
+# Topology Tests
 # =============================================================================
 
-# # Unit tests executable
-# if(UNIT_TEST_SOURCES)
-#     add_executable(unit_tests ${UNIT_TEST_SOURCES})
-#     target_include_directories(unit_tests PRIVATE
-#         ${CMAKE_SOURCE_DIR}/include
-#         ${CMAKE_SOURCE_DIR}/src
-#     )
-#     target_link_libraries(unit_tests PRIVATE
-#         GTest::gtest
-#         GTest::gtest_main
-#         nixl_topo::common
-#         $<$<TARGET_EXISTS:nixl_topo::topology>:nixl_topo::topology>
-#     )
-#     gtest_discover_tests(unit_tests)
-# endif()
+add_executable(test_topology
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_topology.cpp
+)
+
+target_include_directories(test_topology PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_topology PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+    nixl_topo::common
+    nixl_topo::topology
+)
+
+gtest_discover_tests(test_topology)
+
+# Copy test data to build directory
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/test_data
+     DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+# =============================================================================
+# Integration tests (placeholder for future)
+# =============================================================================
+
+# set(INTEGRATION_TEST_SOURCES
+#     # Add test files here as they are created
+#     # test_agent_controller.cpp
+#     # test_nixl_comm.cpp
+# )
 #
-# # Integration tests executable
 # if(INTEGRATION_TEST_SOURCES)
 #     add_executable(integration_tests ${INTEGRATION_TEST_SOURCES})
 #     target_include_directories(integration_tests PRIVATE

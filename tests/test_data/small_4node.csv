@@ -1,0 +1,7 @@
+# 4-node latency matrix with 2 clusters
+# Nodes 0,1 are close (2000ns), nodes 2,3 are close (2000ns)
+# Inter-cluster latency is 10000ns
+0,2000,10000,10000
+2000,0,10000,10000
+10000,10000,0,2000
+10000,10000,2000,0
