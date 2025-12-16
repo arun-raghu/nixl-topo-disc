@@ -3,6 +3,11 @@
 #include <sstream>
 #include <map>
 #include <iomanip>
+#include <fstream>
+#include <cstdlib>
+#include <array>
+#include <memory>
+#include <iostream>
 
 namespace nixl_topo {
 
@@ -150,6 +155,44 @@ std::string TopologyGraph::to_dot() const {
             << edge.latency_ns << "ns\"];\n";
     }
 
+    // Add latency matrix as HTML table if available
+    if (latency_matrix_.has_value()) {
+        const auto& matrix = latency_matrix_.value();
+        size_t n = matrix.num_nodes();
+
+        oss << "\n    // Latency Matrix\n";
+        oss << "    latency_matrix [shape=none, margin=0, label=<\n";
+        oss << "        <TABLE BORDER=\"1\" CELLBORDER=\"1\" CELLSPACING=\"0\" CELLPADDING=\"4\">\n";
+
+        // Title row
+        oss << "        <TR><TD COLSPAN=\"" << (n + 1) << "\" BGCOLOR=\"lightblue\">"
+            << "<B>Latency Matrix (ns)</B></TD></TR>\n";
+
+        // Header row
+        oss << "        <TR><TD BGCOLOR=\"lightgray\"></TD>";
+        for (size_t j = 0; j < n; ++j) {
+            oss << "<TD BGCOLOR=\"lightgray\"><B>P" << j << "</B></TD>";
+        }
+        oss << "</TR>\n";
+
+        // Data rows
+        for (size_t i = 0; i < n; ++i) {
+            oss << "        <TR><TD BGCOLOR=\"lightgray\"><B>P" << i << "</B></TD>";
+            for (size_t j = 0; j < n; ++j) {
+                uint64_t latency = static_cast<uint64_t>(matrix.distance(i, j));
+                if (i == j) {
+                    oss << "<TD BGCOLOR=\"#e0e0e0\">-</TD>";
+                } else {
+                    oss << "<TD>" << latency << "</TD>";
+                }
+            }
+            oss << "</TR>\n";
+        }
+
+        oss << "        </TABLE>\n";
+        oss << "    >];\n";
+    }
+
     oss << "}\n";
     return oss.str();
 }
@@ -210,6 +253,63 @@ std::string TopologyGraph::to_json() const {
 
     oss << "}\n";
     return oss.str();
+}
+
+bool TopologyGraph::write_dot_file(const std::string& output_path) const {
+    std::ofstream file(output_path);
+    if (!file.is_open()) {
+        std::cerr << "Error: Cannot open file for writing: " << output_path << "\n";
+        return false;
+    }
+
+    file << to_dot();
+    return file.good();
+}
+
+bool TopologyGraph::render_to_file(const std::string& output_path,
+                                    const std::string& layout) const {
+    // Determine output format from file extension
+    std::string format = "png";  // Default
+    size_t dot_pos = output_path.rfind('.');
+    if (dot_pos != std::string::npos) {
+        format = output_path.substr(dot_pos + 1);
+    }
+
+    // Supported formats
+    if (format != "png" && format != "svg" && format != "pdf" &&
+        format != "jpg" && format != "gif" && format != "ps") {
+        std::cerr << "Warning: Unknown format '" << format << "', using PNG\n";
+        format = "png";
+    }
+
+    // Build GraphViz command
+    // Use popen to pipe DOT content directly to graphviz
+    std::string command = layout + " -T" + format + " -o \"" + output_path + "\"";
+
+    FILE* pipe = popen(command.c_str(), "w");
+    if (!pipe) {
+        std::cerr << "Error: Failed to execute GraphViz command: " << command << "\n";
+        std::cerr << "Make sure GraphViz is installed (apt install graphviz)\n";
+        return false;
+    }
+
+    // Write DOT content to pipe
+    std::string dot_content = to_dot();
+    size_t written = fwrite(dot_content.c_str(), 1, dot_content.size(), pipe);
+
+    int result = pclose(pipe);
+
+    if (written != dot_content.size()) {
+        std::cerr << "Error: Failed to write DOT content to GraphViz\n";
+        return false;
+    }
+
+    if (result != 0) {
+        std::cerr << "Error: GraphViz returned error code " << result << "\n";
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace nixl_topo

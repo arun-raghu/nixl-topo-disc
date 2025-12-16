@@ -11,11 +11,12 @@
 | latency_matrix.cpp    | CSV parsing, matrix symmetrization, distance metric  |
 | dendrogram.hpp        | ClusterNode struct, Dendrogram class declaration     |
 | dendrogram.cpp        | Agglomerative hierarchical clustering algorithm      |
-| topology_graph.hpp    | PhysicalNode, HiddenNode, Edge, TopologyGraph class  |
-| topology_graph.cpp    | Graph management, export to adjacency list/DOT/JSON  |
+| topology_graph.hpp    | PhysicalNode, HiddenNode, Edge, TopologyGraph class, latency matrix storage |
+| topology_graph.cpp    | Graph management, export formats, GraphViz rendering, latency matrix table |
 | topology_builder.hpp  | TopologyBuilder class declaration                    |
 | topology_builder.cpp  | Orchestrates: matrix -> dendrogram -> tier assignment -> graph |
-| CMakeLists.txt        | Build configuration for topology library             |
+| topology_viz.cpp      | Command-line tool for visualization                  |
+| CMakeLists.txt        | Build configuration for topology library and tools   |
 | CLAUDE.md             | Reference to design docs                             |
 | code_structure.txt    | This file - documents module structure               |
 
@@ -31,7 +32,8 @@
 | File                          | Purpose                                    |
 |-------------------------------|--------------------------------------------|
 | small_4node.csv               | 4x4 matrix, 2 clusters for basic tests     |
-| medium_8node.csv              | 8x8 matrix, hierarchical structure         |
+| medium_8node.csv              | 8x8 matrix, 2 clusters of 4 nodes          |
+| hierarchical_8node.csv        | 8x8 matrix, 3-level hierarchy (tier 1,2,3) |
 | edge_cases/single_node.csv    | 1x1 matrix edge case                       |
 | edge_cases/two_nodes.csv      | 2x2 matrix minimal clustering              |
 | edge_cases/identical_latencies.csv | Tests tie-breaking behavior           |
@@ -43,6 +45,7 @@
 |----------------------|------------------------------------------------------|
 | src/common/types.hpp | Common type definitions (namespace nixl_topo)        |
 | nlohmann/json        | JSON config file parsing (via WITH_JSON CMake flag)  |
+| GraphViz (external)  | Optional: for rendering graphs to PNG/SVG/PDF        |
 
 ## API Overview
 
@@ -63,6 +66,35 @@ TopologyGraph graph = builder.build(matrix);
 std::string adj_list = graph.to_adjacency_list();
 std::string dot = graph.to_dot();
 std::string json = graph.to_json();
+
+// Visualization (requires GraphViz installed)
+// Output includes latency matrix table when built via TopologyBuilder
+graph.render_to_file("topology.png");           // PNG output
+graph.render_to_file("topology.svg");           // SVG output
+graph.render_to_file("topology.pdf", "neato");  // PDF with neato layout
+graph.write_dot_file("topology.dot");           // DOT file only
+```
+
+## Command-Line Tool
+
+```bash
+# Basic usage - generate PNG
+topology_viz latency.csv
+
+# Generate SVG with custom output path
+topology_viz latency.csv -o graph.svg
+
+# Generate DOT file only (no GraphViz needed)
+topology_viz latency.csv -o graph.dot
+
+# Use custom tier thresholds from JSON config
+topology_viz latency.csv -c config.json -o topology.png
+
+# Print adjacency list to stdout
+topology_viz latency.csv -a
+
+# Use different GraphViz layout engine
+topology_viz latency.csv -l neato -o topology.png
 ```
 
 ## Algorithm Summary

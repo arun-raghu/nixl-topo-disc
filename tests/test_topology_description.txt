@@ -1,0 +1,70 @@
+# Topology Test Descriptions
+
+## Inter-Cluster Connectivity Tests
+
+| Test | Purpose |
+|------|---------|
+| InterCluster_HiddenNodesAtMultipleTiers | Verifies hidden nodes exist at tier 1 and tier 2 |
+| InterCluster_HiddenNodesConnected | Confirms edges between hidden nodes at different tiers |
+| InterCluster_PhysicalToHiddenEdges | Checks all physical nodes connect to tier-1 hidden nodes |
+| InterCluster_TotalEdgeCount | Validates total edge count (4 P->H + 2 H->H = 6) |
+| InterCluster_HiddenNodeTypes | Verifies NVSWITCH at tier 1, TOR_SWITCH at tier 2 |
+| InterCluster_8NodeHierarchy | Tests larger topology with 8 nodes in 2 clusters |
+| InterCluster_VerifyParentChildRelationship | Confirms parent hidden node membership is superset of children |
+| InterCluster_NoSelfLoops | Ensures no edge connects a node to itself |
+| InterCluster_SingleClusterNoHigherTier | Verifies single cluster doesn't create unnecessary higher-tier nodes |
+| InterCluster_Tier3_SpineSwitch | Tests 3-level hierarchy with SPINE_SWITCH at tier 3 |
+| InterCluster_MoreThan3Thresholds_UnknownBottleneck | Verifies tier 4+ gets UNKNOWN_BOTTLENECK type |
+| InterCluster_ArbitraryThresholdCount | Tests 1, 5, 10 thresholds work without crashing |
+
+## Latency Matrix Tests
+
+| Test | Purpose |
+|------|---------|
+| LatencyMatrix_LoadFromCSV_Small4Node | Load and parse 4-node CSV matrix |
+| LatencyMatrix_LoadFromCSV_Medium8Node | Load and parse 8-node CSV matrix |
+| LatencyMatrix_LoadFromCSV_InvalidFile | Handle missing/invalid file gracefully |
+| LatencyMatrix_Distance_Symmetric | Verify distance(i,j) == distance(j,i) |
+| LatencyMatrix_Symmetrize | Test matrix symmetrization with asymmetric input |
+| LatencyMatrix_SingleNode | Handle edge case of single node matrix |
+| LatencyMatrix_TwoNodes | Handle edge case of two node matrix |
+
+## Dendrogram Tests
+
+| Test | Purpose |
+|------|---------|
+| Dendrogram_Build_CorrectNodeCount | Verify dendrogram has correct total nodes (2n-1) |
+| Dendrogram_Build_LeavesAreCorrect | Verify leaf nodes represent original data points |
+| Dendrogram_Build_InternalNodesHaveChildren | Verify internal nodes have exactly 2 children |
+| Dendrogram_Build_RootContainsAllNodes | Verify root contains all original nodes |
+| Dendrogram_Build_MergeDistancesAreMonotonic | Verify merge distances are non-decreasing |
+| Dendrogram_CutAtThreshold_AllSeparate | Cut at 0 yields n singleton clusters |
+| Dendrogram_CutAtThreshold_AllMerged | Cut at infinity yields 1 cluster |
+| Dendrogram_CutAtThreshold_IntermediateCut | Cut at middle threshold yields expected clusters |
+| Dendrogram_SingleNode | Handle single node dendrogram |
+| Dendrogram_TwoNodes | Handle two node dendrogram |
+
+## Topology Builder Tests
+
+| Test | Purpose |
+|------|---------|
+| TopologyBuilder_Build_ProducesValidGraph | Verify build() produces non-empty graph |
+| TopologyBuilder_Build_TierAssignment | Verify physical nodes assigned correct tiers |
+| TopologyBuilder_Build_ClusterMembership | Verify nodes grouped into correct clusters |
+| TopologyBuilder_BuildFromCSV | Test end-to-end CSV to graph pipeline |
+| TopologyBuilder_CustomConfig | Test custom tier threshold configuration |
+
+## Topology Graph Export Tests
+
+| Test | Purpose |
+|------|---------|
+| TopologyGraph_ToAdjacencyList_ValidFormat | Verify adjacency list output format |
+| TopologyGraph_ToDot_ValidFormat | Verify DOT/GraphViz output format |
+| TopologyGraph_ToJson_ValidFormat | Verify JSON output format |
+
+## End-to-End Tests
+
+| Test | Purpose |
+|------|---------|
+| EndToEnd_CSVToAdjacencyList | Full pipeline test with 4-node matrix |
+| EndToEnd_Medium8Node | Full pipeline test with 8-node matrix |

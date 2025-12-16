@@ -57,4 +57,13 @@ nixl-topo-disc/
 
 ## Topology Module
 
-When modifying code in `src/topology/`, update `src/topology/code_structure.txt` to reflect changes.
+- When modifying code in `src/topology/`, update `src/topology/code_structure.txt` to reflect changes.
+
+---
+
+## Testing Rules
+
+- When adding or modifying unit tests, update `tests/test_descriptions.txt` with test name and purpose.
+- Test descriptions file contains tables for each test file (test_types.cpp, test_memory.cpp, test_controller_buffer.cpp, test_topology.cpp).
+- Format: `TestSuite.TestName | Brief description of what the test verifies`
+- Run `ctest` from build directory to verify all tests pass after changes.

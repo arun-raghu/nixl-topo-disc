@@ -1,8 +1,10 @@
 #pragma once
 
 #include "tier_config.hpp"
+#include "latency_matrix.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -88,6 +90,10 @@ public:
     void add_hidden_node(const HiddenNode& node);
     void add_edge(const Edge& edge);
 
+    // Set latency matrix for visualization
+    void set_latency_matrix(const LatencyMatrix& matrix) { latency_matrix_ = matrix; }
+    const std::optional<LatencyMatrix>& latency_matrix() const { return latency_matrix_; }
+
     // Accessors
     const std::vector<PhysicalNode>& physical_nodes() const { return physical_nodes_; }
     const std::vector<HiddenNode>& hidden_nodes() const { return hidden_nodes_; }
@@ -107,6 +113,19 @@ public:
     /// Export to JSON format
     std::string to_json() const;
 
+    // Visualization
+    /// Render graph to image file using GraphViz
+    /// @param output_path Output file path (extension determines format: .png, .svg, .pdf)
+    /// @param layout GraphViz layout engine (dot, neato, fdp, sfdp, circo, twopi)
+    /// @return true on success, false if GraphViz not available or rendering failed
+    bool render_to_file(const std::string& output_path,
+                        const std::string& layout = "dot") const;
+
+    /// Write DOT file to disk
+    /// @param output_path Output file path (should end in .dot or .gv)
+    /// @return true on success
+    bool write_dot_file(const std::string& output_path) const;
+
     // Utilities
     bool empty() const { return physical_nodes_.empty(); }
     size_t num_physical_nodes() const { return physical_nodes_.size(); }
@@ -117,6 +136,7 @@ private:
     std::vector<PhysicalNode> physical_nodes_;
     std::vector<HiddenNode> hidden_nodes_;
     std::vector<Edge> edges_;
+    std::optional<LatencyMatrix> latency_matrix_;
 };
 
 } // namespace nixl_topo

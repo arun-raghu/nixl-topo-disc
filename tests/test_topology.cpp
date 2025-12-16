@@ -282,6 +282,283 @@ TEST_F(TopologyTest, TopologyBuilder_CustomConfig) {
 }
 
 // =============================================================================
+// Inter-Cluster Connectivity Tests
+// =============================================================================
+
+TEST_F(TopologyTest, InterCluster_HiddenNodesAtMultipleTiers) {
+    // small_4node.csv: nodes 0,1 cluster at 2000ns, nodes 2,3 cluster at 2000ns
+    // All 4 nodes cluster at 10000ns
+    // Expected: 2 tier-0 hidden nodes + 1 tier-1 hidden node = 3 hidden nodes
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Should have hidden nodes at multiple tiers
+    EXPECT_EQ(graph.num_hidden_nodes(), 3);
+
+    // Count hidden nodes by tier
+    std::map<uint32_t, int> nodes_by_tier;
+    for (const auto& hn : graph.hidden_nodes()) {
+        nodes_by_tier[hn.tier]++;
+    }
+
+    // Should have 2 at tier 1, 1 at tier 2 (physical nodes are tier 0)
+    EXPECT_EQ(nodes_by_tier[1], 2);
+    EXPECT_EQ(nodes_by_tier[2], 1);
+}
+
+TEST_F(TopologyTest, InterCluster_HiddenNodesConnected) {
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Count edges between hidden nodes (both src and dst are hidden)
+    int hidden_to_hidden_edges = 0;
+    for (const auto& edge : graph.edges()) {
+        if (edge.src_is_hidden && edge.dst_is_hidden) {
+            hidden_to_hidden_edges++;
+        }
+    }
+
+    // Should have 2 edges: H0->H2 and H1->H2
+    EXPECT_EQ(hidden_to_hidden_edges, 2);
+}
+
+TEST_F(TopologyTest, InterCluster_PhysicalToHiddenEdges) {
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Count edges from physical to hidden nodes
+    int physical_to_hidden_edges = 0;
+    for (const auto& edge : graph.edges()) {
+        if (!edge.src_is_hidden && edge.dst_is_hidden) {
+            physical_to_hidden_edges++;
+        }
+    }
+
+    // Each physical node should connect to exactly one hidden node
+    EXPECT_EQ(physical_to_hidden_edges, 4);
+}
+
+TEST_F(TopologyTest, InterCluster_TotalEdgeCount) {
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Total edges: 4 (physical->hidden) + 2 (hidden->hidden) = 6
+    EXPECT_EQ(graph.num_edges(), 6);
+}
+
+TEST_F(TopologyTest, InterCluster_HiddenNodeTypes) {
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Tier 1 should be NVSWITCH, Tier 2 should be TOR_SWITCH (physical nodes are tier 0)
+    for (const auto& hn : graph.hidden_nodes()) {
+        if (hn.tier == 1) {
+            EXPECT_EQ(hn.type, HiddenNodeType::NVSWITCH);
+        } else if (hn.tier == 2) {
+            EXPECT_EQ(hn.type, HiddenNodeType::TOR_SWITCH);
+        }
+    }
+}
+
+TEST_F(TopologyTest, InterCluster_8NodeHierarchy) {
+    // medium_8node.csv: nodes 0-3 cluster together, nodes 4-7 cluster together
+    // Then all 8 cluster at higher tier
+    auto matrix = LatencyMatrix::from_csv(test_data_path("medium_8node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Should have 8 physical nodes
+    EXPECT_EQ(graph.num_physical_nodes(), 8);
+
+    // Should have hidden nodes: 2 at tier 1 + 1 at tier 2 = 3 (physical nodes are tier 0)
+    EXPECT_EQ(graph.num_hidden_nodes(), 3);
+
+    // Each physical node connects to one hidden node (8 edges)
+    // Plus 2 hidden-to-hidden edges
+    EXPECT_EQ(graph.num_edges(), 10);
+}
+
+TEST_F(TopologyTest, InterCluster_VerifyParentChildRelationship) {
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Find the tier-2 hidden node (physical nodes are tier 0, first-level switches tier 1)
+    const HiddenNode* tier2_node = nullptr;
+    for (const auto& hn : graph.hidden_nodes()) {
+        if (hn.tier == 2) {
+            tier2_node = &hn;
+            break;
+        }
+    }
+    ASSERT_NE(tier2_node, nullptr);
+
+    // Verify that both tier-1 hidden nodes connect to the tier-2 node
+    int connections_to_tier2 = 0;
+    for (const auto& edge : graph.edges()) {
+        if (edge.src_is_hidden && edge.dst_is_hidden &&
+            edge.dst_id == tier2_node->hv_id) {
+            connections_to_tier2++;
+        }
+    }
+    EXPECT_EQ(connections_to_tier2, 2);
+}
+
+TEST_F(TopologyTest, InterCluster_NoSelfLoops) {
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // No edge should connect a node to itself
+    for (const auto& edge : graph.edges()) {
+        if (edge.src_is_hidden == edge.dst_is_hidden) {
+            EXPECT_NE(edge.src_id, edge.dst_id);
+        }
+    }
+}
+
+TEST_F(TopologyTest, InterCluster_SingleClusterNoHigherTier) {
+    // identical_latencies.csv: all nodes have same distance, form one cluster
+    auto matrix = LatencyMatrix::from_csv(test_data_path("edge_cases/identical_latencies.csv"));
+
+    TopologyBuilder builder;
+    auto graph = builder.build(matrix);
+
+    // Should have 4 physical nodes
+    EXPECT_EQ(graph.num_physical_nodes(), 4);
+
+    // All nodes cluster together at tier 1 (physical nodes are tier 0), no higher tier needed
+    // Should have 1 hidden node at tier 1
+    EXPECT_GE(graph.num_hidden_nodes(), 1);
+
+    // No hidden-to-hidden edges (single cluster)
+    int hidden_to_hidden = 0;
+    for (const auto& edge : graph.edges()) {
+        if (edge.src_is_hidden && edge.dst_is_hidden) {
+            hidden_to_hidden++;
+        }
+    }
+    EXPECT_EQ(hidden_to_hidden, 0);
+}
+
+TEST_F(TopologyTest, InterCluster_Tier3_SpineSwitch) {
+    // hierarchical_8node.csv creates a 3-level hierarchy:
+    // - Nodes 0,1 and 2,3 cluster at 1000ns (2 tier-1 NVSWITCH)
+    // - Nodes 4,5 and 6,7 cluster at 1000ns (2 more tier-1 NVSWITCH)
+    // - {0,1,2,3} merge at 5000ns (1 tier-2 TOR_SWITCH)
+    // - {4,5,6,7} merge at 5000ns (1 more tier-2 TOR_SWITCH)
+    // - All merge at 20000ns (1 tier-3 SPINE_SWITCH)
+    auto matrix = LatencyMatrix::from_csv(test_data_path("hierarchical_8node.csv"));
+
+    TierConfig config;
+    config.tier_thresholds = {2000, 10000, 30000};  // 3 thresholds
+
+    TopologyBuilder builder(config);
+    auto graph = builder.build(matrix);
+
+    // Should have 8 physical nodes
+    EXPECT_EQ(graph.num_physical_nodes(), 8);
+
+    // Count hidden nodes by tier
+    std::map<uint32_t, int> nodes_by_tier;
+    std::map<uint32_t, HiddenNodeType> type_by_tier;
+    for (const auto& hn : graph.hidden_nodes()) {
+        nodes_by_tier[hn.tier]++;
+        type_by_tier[hn.tier] = hn.type;  // All nodes at same tier have same type
+    }
+
+    // Should have nodes at tier 1, 2, and 3
+    EXPECT_EQ(nodes_by_tier[1], 4);  // 4 NVSWITCH (one per pair)
+    EXPECT_EQ(nodes_by_tier[2], 2);  // 2 TOR_SWITCH (one per quad)
+    EXPECT_EQ(nodes_by_tier[3], 1);  // 1 SPINE_SWITCH (connects all)
+
+    // Verify types
+    EXPECT_EQ(type_by_tier[1], HiddenNodeType::NVSWITCH);
+    EXPECT_EQ(type_by_tier[2], HiddenNodeType::TOR_SWITCH);
+    EXPECT_EQ(type_by_tier[3], HiddenNodeType::SPINE_SWITCH);
+
+    std::cout << "\n=== 3-Level Hierarchy (Adjacency List) ===\n"
+              << graph.to_adjacency_list() << std::endl;
+}
+
+TEST_F(TopologyTest, InterCluster_MoreThan3Thresholds_UnknownBottleneck) {
+    // Test with 4 thresholds - tier 4 should be UNKNOWN_BOTTLENECK
+    auto matrix = LatencyMatrix::from_csv(test_data_path("hierarchical_8node.csv"));
+
+    TierConfig config;
+    // 4 thresholds: creates up to 5 tiers of hidden nodes (1,2,3,4,5)
+    config.tier_thresholds = {1500, 3000, 10000, 30000};
+
+    TopologyBuilder builder(config);
+    auto graph = builder.build(matrix);
+
+    // Find the highest tier hidden node
+    uint32_t max_tier = 0;
+    HiddenNodeType max_tier_type = HiddenNodeType::UNKNOWN_BOTTLENECK;
+    for (const auto& hn : graph.hidden_nodes()) {
+        if (hn.tier > max_tier) {
+            max_tier = hn.tier;
+            max_tier_type = hn.type;
+        }
+    }
+
+    // With 4 thresholds, we can have up to tier 5 hidden nodes
+    // Tier 4+ should be UNKNOWN_BOTTLENECK
+    if (max_tier >= 4) {
+        EXPECT_EQ(max_tier_type, HiddenNodeType::UNKNOWN_BOTTLENECK);
+    }
+
+    std::cout << "\n=== 4-Threshold Test ===\n"
+              << "Max tier: " << max_tier << "\n"
+              << graph.to_adjacency_list() << std::endl;
+}
+
+TEST_F(TopologyTest, InterCluster_ArbitraryThresholdCount) {
+    // Verify code handles arbitrary number of thresholds without crashing
+    auto matrix = LatencyMatrix::from_csv(test_data_path("small_4node.csv"));
+
+    // Test with 1 threshold
+    {
+        TierConfig config;
+        config.tier_thresholds = {5000};
+        TopologyBuilder builder(config);
+        auto graph = builder.build(matrix);
+        EXPECT_GT(graph.num_physical_nodes(), 0);
+    }
+
+    // Test with 5 thresholds
+    {
+        TierConfig config;
+        config.tier_thresholds = {1000, 3000, 5000, 10000, 50000};
+        TopologyBuilder builder(config);
+        auto graph = builder.build(matrix);
+        EXPECT_GT(graph.num_physical_nodes(), 0);
+    }
+
+    // Test with 10 thresholds
+    {
+        TierConfig config;
+        config.tier_thresholds = {500, 1000, 2000, 3000, 5000, 7000, 10000, 15000, 30000, 50000};
+        TopologyBuilder builder(config);
+        auto graph = builder.build(matrix);
+        EXPECT_GT(graph.num_physical_nodes(), 0);
+    }
+}
+
+// =============================================================================
 // TopologyGraph Output Tests
 // =============================================================================
 

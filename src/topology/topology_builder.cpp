@@ -48,6 +48,9 @@ TopologyGraph TopologyBuilder::build(const LatencyMatrix& latencies) {
         graph.add_edge(edge);
     }
 
+    // Step 6: Store latency matrix for visualization
+    graph.set_latency_matrix(latencies);
+
     return graph;
 }
 
@@ -113,29 +116,69 @@ std::vector<HiddenNode> TopologyBuilder::infer_hidden_nodes(
     const std::vector<TierAssignment>& tier_assignments,
     const Dendrogram& dendrogram) {
 
+    (void)tier_assignments;  // We'll use dendrogram directly for hierarchical structure
+
     std::vector<HiddenNode> hidden_nodes;
 
-    // Group nodes by (tier, cluster_id)
-    std::map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>> clusters;
-    for (const auto& ta : tier_assignments) {
-        clusters[{ta.tier, ta.cluster_id}].push_back(ta.node_id);
-    }
-
+    // Create hidden nodes at EACH tier level by cutting the dendrogram
+    // at each threshold and identifying clusters that form at that level
     uint32_t hv_id = 0;
-    for (const auto& [key, members] : clusters) {
-        auto [tier, cluster_id] = key;
 
-        // Only create hidden node if cluster has multiple members
-        if (members.size() >= config_.min_cluster_size_for_switch) {
-            HiddenNodeType type = infer_hidden_type(tier);
-            std::string label = std::string(to_string(type)) + "-" + std::to_string(cluster_id);
+    for (uint32_t tier = 0; tier <= config_.tier_thresholds.size(); ++tier) {
+        double threshold;
+        if (tier < config_.tier_thresholds.size()) {
+            threshold = static_cast<double>(config_.tier_thresholds[tier]);
+        } else {
+            // For the highest tier, use infinity to get all remaining merges
+            threshold = dendrogram.max_distance() + 1.0;
+        }
 
-            // Calculate confidence based on cluster tightness
-            // For now, use a simple heuristic based on cluster size
-            double confidence = std::min(0.95, 0.5 + 0.1 * members.size());
+        auto clusters = dendrogram.cut_at_threshold(threshold);
 
-            hidden_nodes.emplace_back(hv_id, type, tier, label, confidence);
-            ++hv_id;
+        // Track which clusters at this tier have multiple members
+        // and weren't already fully formed at a lower tier
+        uint32_t cluster_idx = 0;
+        for (const auto& cluster : clusters) {
+            if (cluster.size() >= config_.min_cluster_size_for_switch) {
+                // Check if this cluster is NEW at this tier (not already formed at lower tier)
+                bool is_new_cluster = false;
+
+                if (tier == 0) {
+                    // All clusters at tier 0 are new
+                    is_new_cluster = true;
+                } else {
+                    // Check if this cluster was split at the previous tier
+                    double prev_threshold = static_cast<double>(config_.tier_thresholds[tier - 1]);
+                    auto prev_clusters = dendrogram.cut_at_threshold(prev_threshold);
+
+                    // This cluster is new if it wasn't a single cluster at prev tier
+                    bool found_as_single = false;
+                    for (const auto& prev_cluster : prev_clusters) {
+                        if (prev_cluster.size() == cluster.size()) {
+                            // Check if same members
+                            std::set<uint32_t> curr_set(cluster.begin(), cluster.end());
+                            std::set<uint32_t> prev_set(prev_cluster.begin(), prev_cluster.end());
+                            if (curr_set == prev_set) {
+                                found_as_single = true;
+                                break;
+                            }
+                        }
+                    }
+                    is_new_cluster = !found_as_single;
+                }
+
+                if (is_new_cluster) {
+                    HiddenNodeType type = infer_hidden_type(tier);
+                    std::string label = std::string(to_string(type)) + "-" + std::to_string(cluster_idx);
+
+                    double confidence = std::min(0.95, 0.5 + 0.1 * cluster.size());
+
+                    // Hidden nodes are tier+1 since physical nodes are tier 0
+                    hidden_nodes.emplace_back(hv_id, type, tier + 1, label, confidence);
+                    ++hv_id;
+                }
+            }
+            ++cluster_idx;
         }
     }
 
@@ -149,91 +192,205 @@ std::vector<Edge> TopologyBuilder::construct_edges(
 
     std::vector<Edge> edges;
 
-    // Build map from (tier, cluster_id) to hidden node index
-    std::map<std::pair<uint32_t, uint32_t>, size_t> cluster_to_hidden;
-    for (size_t i = 0; i < hidden_nodes.size(); ++i) {
-        // Need to figure out which cluster this hidden node represents
-        // For now, hidden nodes are indexed in order of (tier, cluster_id)
+    if (hidden_nodes.empty()) {
+        return edges;
     }
 
-    // Group physical nodes by (tier, cluster_id)
-    std::map<std::pair<uint32_t, uint32_t>, std::vector<const PhysicalNode*>> clusters;
-    for (const auto& pn : physical_nodes) {
-        clusters[{pn.tier, pn.cluster_id}].push_back(&pn);
-    }
-
-    // Match clusters to hidden nodes
-    size_t hidden_idx = 0;
-    for (const auto& [key, members] : clusters) {
-        if (members.size() >= config_.min_cluster_size_for_switch && hidden_idx < hidden_nodes.size()) {
-            cluster_to_hidden[key] = hidden_idx;
-            ++hidden_idx;
-        }
-    }
-
-    // Create edges from physical nodes to their cluster's hidden node
-    for (const auto& pn : physical_nodes) {
-        auto it = cluster_to_hidden.find({pn.tier, pn.cluster_id});
-        if (it != cluster_to_hidden.end()) {
-            const HiddenNode& hn = hidden_nodes[it->second];
-
-            // Calculate average latency from this node to others in cluster
-            uint64_t avg_latency = 0;
-            size_t count = 0;
-            for (const auto& other : physical_nodes) {
-                if (other.tier == pn.tier && other.cluster_id == pn.cluster_id &&
-                    other.node_id != pn.node_id) {
-                    avg_latency += static_cast<uint64_t>(latencies.distance(pn.node_id, other.node_id));
-                    ++count;
-                }
-            }
-            if (count > 0) {
-                avg_latency /= count;
-                // Edge latency is half the round-trip (approximation)
-                avg_latency /= 2;
-            }
-
-            Edge edge(pn.node_id, hn.hv_id, false, true, avg_latency, EdgeType::SWITCHED);
-            edges.push_back(edge);
-        }
-    }
-
-    // Create edges between hidden nodes at different tiers
-    // Connect lower-tier hidden nodes to higher-tier hidden nodes
+    // Group hidden nodes by tier
     std::map<uint32_t, std::vector<size_t>> hidden_by_tier;
     for (size_t i = 0; i < hidden_nodes.size(); ++i) {
         hidden_by_tier[hidden_nodes[i].tier].push_back(i);
     }
 
-    // For simplicity, connect all hidden nodes at tier T to a single node at tier T+1
-    // This is a simplification - real topology inference would be more sophisticated
+    // Find the lowest tier with hidden nodes - physical nodes connect here
+    uint32_t lowest_tier = hidden_nodes[0].tier;
+    for (const auto& hn : hidden_nodes) {
+        lowest_tier = std::min(lowest_tier, hn.tier);
+    }
+
+    // We need to rebuild cluster membership to match hidden nodes to physical nodes
+    // Build dendrogram to get cluster info (we don't have it passed in)
+    Dendrogram dendrogram = Dendrogram::build(latencies, config_.linkage);
+
+    // Get clusters at each tier and map to hidden nodes
+    // hidden_node_members[hv_id] = set of physical node IDs in that hidden node's cluster
+    std::map<uint32_t, std::set<uint32_t>> hidden_node_members;
+
+    size_t hv_idx = 0;
+    for (uint32_t tier = 0; tier <= config_.tier_thresholds.size() && hv_idx < hidden_nodes.size(); ++tier) {
+        double threshold;
+        if (tier < config_.tier_thresholds.size()) {
+            threshold = static_cast<double>(config_.tier_thresholds[tier]);
+        } else {
+            threshold = dendrogram.max_distance() + 1.0;
+        }
+
+        auto clusters = dendrogram.cut_at_threshold(threshold);
+
+        for (const auto& cluster : clusters) {
+            if (cluster.size() >= config_.min_cluster_size_for_switch) {
+                // Check if this is a NEW cluster at this tier
+                bool is_new_cluster = false;
+
+                if (tier == 0) {
+                    is_new_cluster = true;
+                } else {
+                    double prev_threshold = static_cast<double>(config_.tier_thresholds[tier - 1]);
+                    auto prev_clusters = dendrogram.cut_at_threshold(prev_threshold);
+
+                    bool found_as_single = false;
+                    for (const auto& prev_cluster : prev_clusters) {
+                        if (prev_cluster.size() == cluster.size()) {
+                            std::set<uint32_t> curr_set(cluster.begin(), cluster.end());
+                            std::set<uint32_t> prev_set(prev_cluster.begin(), prev_cluster.end());
+                            if (curr_set == prev_set) {
+                                found_as_single = true;
+                                break;
+                            }
+                        }
+                    }
+                    is_new_cluster = !found_as_single;
+                }
+
+                if (is_new_cluster && hv_idx < hidden_nodes.size()) {
+                    hidden_node_members[hidden_nodes[hv_idx].hv_id] =
+                        std::set<uint32_t>(cluster.begin(), cluster.end());
+                    ++hv_idx;
+                }
+            }
+        }
+    }
+
+    // Connect physical nodes to their lowest-tier hidden node
+    for (const auto& pn : physical_nodes) {
+        // Find which tier-0 hidden node contains this physical node
+        for (const auto& [hv_id, members] : hidden_node_members) {
+            const HiddenNode& hn = hidden_nodes[hv_id];
+            if (hn.tier == lowest_tier && members.count(pn.node_id)) {
+                // Calculate average latency to other nodes in this cluster
+                uint64_t avg_latency = 0;
+                size_t count = 0;
+                for (uint32_t other_id : members) {
+                    if (other_id != pn.node_id) {
+                        avg_latency += static_cast<uint64_t>(latencies.distance(pn.node_id, other_id));
+                        ++count;
+                    }
+                }
+                if (count > 0) {
+                    avg_latency /= count;
+                    avg_latency /= 2;  // Half for one-way
+                }
+
+                Edge edge(pn.node_id, hv_id, false, true, avg_latency, EdgeType::SWITCHED);
+                edges.push_back(edge);
+                break;
+            }
+        }
+    }
+
+    // Connect hidden nodes across tiers
+    // A lower-tier hidden node connects to a higher-tier hidden node if
+    // the higher-tier node's members are a superset of the lower-tier node's members
     uint32_t max_tier = 0;
     for (const auto& hn : hidden_nodes) {
         max_tier = std::max(max_tier, hn.tier);
     }
 
-    for (uint32_t tier = 0; tier < max_tier; ++tier) {
-        if (hidden_by_tier.find(tier) != hidden_by_tier.end() &&
-            hidden_by_tier.find(tier + 1) != hidden_by_tier.end()) {
+    for (uint32_t tier = lowest_tier; tier < max_tier; ++tier) {
+        if (hidden_by_tier.find(tier) == hidden_by_tier.end() ||
+            hidden_by_tier.find(tier + 1) == hidden_by_tier.end()) {
+            continue;
+        }
 
-            const auto& lower_tier_nodes = hidden_by_tier[tier];
-            const auto& upper_tier_nodes = hidden_by_tier[tier + 1];
+        for (size_t lower_idx : hidden_by_tier[tier]) {
+            const HiddenNode& lower_hn = hidden_nodes[lower_idx];
+            const auto& lower_members = hidden_node_members[lower_hn.hv_id];
 
-            // Connect each lower tier node to the first upper tier node
-            // (simplified - real implementation would use latency data)
-            if (!upper_tier_nodes.empty()) {
-                for (size_t lower_idx : lower_tier_nodes) {
-                    uint64_t inter_tier_latency = 0;
-                    if (tier + 1 < config_.tier_thresholds.size()) {
-                        inter_tier_latency = config_.tier_thresholds[tier + 1] / 2;
-                    } else {
-                        inter_tier_latency = 50000;  // Default 50us
+            // Find the parent hidden node at tier+1 that contains all our members
+            for (size_t upper_idx : hidden_by_tier[tier + 1]) {
+                const HiddenNode& upper_hn = hidden_nodes[upper_idx];
+                const auto& upper_members = hidden_node_members[upper_hn.hv_id];
+
+                // Check if upper_members is a superset of lower_members
+                bool is_superset = true;
+                for (uint32_t m : lower_members) {
+                    if (upper_members.find(m) == upper_members.end()) {
+                        is_superset = false;
+                        break;
+                    }
+                }
+
+                if (is_superset) {
+                    // Calculate inter-tier latency from actual measured latencies
+                    // Find nodes in upper cluster but NOT in lower cluster (sibling clusters)
+                    std::set<uint32_t> sibling_members;
+                    for (uint32_t m : upper_members) {
+                        if (lower_members.find(m) == lower_members.end()) {
+                            sibling_members.insert(m);
+                        }
                     }
 
-                    Edge edge(static_cast<uint32_t>(hidden_nodes[lower_idx].hv_id),
-                             static_cast<uint32_t>(hidden_nodes[upper_tier_nodes[0]].hv_id),
-                             true, true, inter_tier_latency, EdgeType::SWITCHED);
+                    uint64_t inter_tier_latency = 0;
+                    if (!sibling_members.empty()) {
+                        // Calculate average cross-cluster latency (between lower and sibling clusters)
+                        double total_cross_latency = 0.0;
+                        size_t cross_count = 0;
+                        for (uint32_t lower_node : lower_members) {
+                            for (uint32_t sibling_node : sibling_members) {
+                                total_cross_latency += latencies.distance(lower_node, sibling_node);
+                                ++cross_count;
+                            }
+                        }
+
+                        if (cross_count > 0) {
+                            double avg_cross = total_cross_latency / cross_count;
+
+                            // Calculate path length from physical node to this hidden node
+                            // by summing edge weights of the path we've already computed
+                            double path_to_lower = 0.0;
+
+                            // Find any physical node in lower_members and trace path to lower_hn
+                            uint32_t sample_node = *lower_members.begin();
+
+                            // Sum edges from sample_node up to lower_hn
+                            for (const auto& e : edges) {
+                                if (!e.src_is_hidden && e.dst_is_hidden) {
+                                    // Physical to hidden edge
+                                    if (e.src_id == sample_node) {
+                                        path_to_lower += e.latency_ns;
+                                        // Now find path from that hidden node to lower_hn
+                                        uint32_t current_hv = e.dst_id;
+                                        while (current_hv != lower_hn.hv_id) {
+                                            bool found = false;
+                                            for (const auto& e2 : edges) {
+                                                if (e2.src_is_hidden && e2.dst_is_hidden &&
+                                                    e2.src_id == current_hv) {
+                                                    path_to_lower += e2.latency_ns;
+                                                    current_hv = e2.dst_id;
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (!found) break;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Edge latency = (cross_latency - 2*path_to_lower) / 2
+                            // Path: P_a -> ... -> lower_hn -> upper_hn -> ... -> P_b
+                            // Total = path_to_lower + edge + edge + path_to_sibling
+                            // Assuming symmetric: path_to_sibling ≈ path_to_lower
+                            inter_tier_latency = static_cast<uint64_t>(
+                                std::max(0.0, (avg_cross - 2.0 * path_to_lower) / 2.0));
+                        }
+                    }
+
+                    Edge edge(lower_hn.hv_id, upper_hn.hv_id, true, true,
+                             inter_tier_latency, EdgeType::SWITCHED);
                     edges.push_back(edge);
+                    break;  // Found parent, move to next lower node
                 }
             }
         }
