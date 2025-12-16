@@ -137,6 +137,78 @@ install(DIRECTORY include/
 )
 
 # =============================================================================
+# Docker Configuration
+# =============================================================================
+set(CONTAINER_INSTALL_PREFIX "/opt/nixl-topo" CACHE STRING "Install prefix inside container")
+
+# Container library paths (mirrors the structure from Dependencies.cmake)
+if(BUILD_DEPS_FROM_SOURCE)
+    # When building deps from source, they install to subdirectories
+    set(CONTAINER_LIB_PATH "${CONTAINER_INSTALL_PREFIX}/lib/x86_64-linux-gnu")
+    set(CONTAINER_UCX_LIB_PATH "${CONTAINER_INSTALL_PREFIX}/lib")
+    set(CONTAINER_NIXL_PLUGIN_DIR "${CONTAINER_INSTALL_PREFIX}/lib/x86_64-linux-gnu/plugins")
+else()
+    # When using pre-installed deps, assume standard paths
+    set(CONTAINER_LIB_PATH "${CONTAINER_INSTALL_PREFIX}/lib")
+    set(CONTAINER_UCX_LIB_PATH "${CONTAINER_INSTALL_PREFIX}/lib")
+    set(CONTAINER_NIXL_PLUGIN_DIR "${CONTAINER_INSTALL_PREFIX}/lib/plugins")
+endif()
+
+# Generate Dockerfile and entrypoint from templates
+configure_file(
+    ${CMAKE_SOURCE_DIR}/docker/Dockerfile.in
+    ${CMAKE_BINARY_DIR}/docker/Dockerfile
+    @ONLY
+)
+configure_file(
+    ${CMAKE_SOURCE_DIR}/docker/entrypoint.sh.in
+    ${CMAKE_BINARY_DIR}/docker/entrypoint.sh
+    @ONLY
+)
+
+# Custom target to build docker image
+add_custom_target(docker-build
+    COMMAND ${CMAKE_COMMAND} -E echo "=============================================="
+    COMMAND ${CMAKE_COMMAND} -E echo "Building Docker image: nixl-topo-disc:latest"
+    COMMAND ${CMAKE_COMMAND} -E echo "=============================================="
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_BINARY_DIR}/docker/Dockerfile
+        ${CMAKE_SOURCE_DIR}/Dockerfile
+    COMMAND docker build -t nixl-topo-disc:latest ${CMAKE_SOURCE_DIR}
+    COMMAND ${CMAKE_COMMAND} -E remove ${CMAKE_SOURCE_DIR}/Dockerfile
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "=============================================="
+    COMMAND ${CMAKE_COMMAND} -E echo "Docker image built successfully!"
+    COMMAND ${CMAKE_COMMAND} -E echo "=============================================="
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "Usage:"
+    COMMAND ${CMAKE_COMMAND} -E echo "  docker run nixl-topo-disc controller -n <num_agents> [-t <timeout>]"
+    COMMAND ${CMAKE_COMMAND} -E echo "  docker run nixl-topo-disc agent"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "Examples:"
+    COMMAND ${CMAKE_COMMAND} -E echo "  # Run controller expecting 4 agents"
+    COMMAND ${CMAKE_COMMAND} -E echo "  docker run --rm --network host nixl-topo-disc controller -n 4"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "  # Run agent with environment from controller"
+    COMMAND ${CMAKE_COMMAND} -E echo "  docker run --rm --network host -e AGENT_ID=0 -e CTRL_METADATA=... nixl-topo-disc agent"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMAND ${CMAKE_COMMAND} -E echo "Environment variables:"
+    COMMAND ${CMAKE_COMMAND} -E echo "  NIXL_LOG_LEVEL    Set to 'debug' for verbose output"
+    COMMAND ${CMAKE_COMMAND} -E echo "  UCX_LOG_LEVEL     Set to 'debug' for UCX diagnostics"
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Building Docker image nixl-topo-disc:latest"
+    VERBATIM
+)
+
+# Generate env setup script for local development/testing
+configure_file(
+    ${CMAKE_SOURCE_DIR}/docker/env-setup.sh.in
+    ${CMAKE_BINARY_DIR}/bin/env-setup.sh
+    @ONLY
+)
+
+# =============================================================================
 # Summary
 # =============================================================================
 message(STATUS "")
