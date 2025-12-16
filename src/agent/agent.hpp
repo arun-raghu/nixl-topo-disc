@@ -99,6 +99,12 @@ private:
     /// @return TestResult with latency statistics
     TestResult execute_ping_pong(const TestCommand& cmd);
 
+    /// Execute a unidirectional bandwidth test.
+    /// INITIATOR sends window of messages, RESPONDER receives and ACKs.
+    /// @param cmd The test command (already converted from wire format)
+    /// @return TestResult with bandwidth statistics
+    TestResult execute_bandwidth(const TestCommand& cmd);
+
     /// Write result to controller's result slot (initiator only).
     /// @param result The result to write
     /// @return true on success

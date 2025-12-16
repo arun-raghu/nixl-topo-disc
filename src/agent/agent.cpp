@@ -472,6 +472,7 @@ bool Agent::poll_and_execute_command() {
             case CommandType::NONE: return "NONE";
             case CommandType::SHUTDOWN: return "SHUTDOWN";
             case CommandType::PING_PONG_LATENCY: return "PING_PONG_LATENCY";
+            case CommandType::BANDWIDTH: return "BANDWIDTH";
             default: return "UNKNOWN";
         }
     };
@@ -485,7 +486,8 @@ bool Agent::poll_and_execute_command() {
               << "  peer_agent_id=" << cmd.peer_agent_id << "\n"
               << "  message_size=" << cmd.message_size << "\n"
               << "  iterations=" << cmd.iterations << "\n"
-              << "  warmup_iterations=" << cmd.warmup_iterations << "\n";
+              << "  warmup_iterations=" << cmd.warmup_iterations << "\n"
+              << "  window_size=" << cmd.window_size << "\n";
 
     last_command_seq_ = cmd.command_seq;
 
@@ -500,6 +502,16 @@ bool Agent::poll_and_execute_command() {
         TestResult result = execute_ping_pong(cmd);
 
         // Only initiator reports result
+        if (cmd.role == TestRole::INITIATOR) {
+            report_result(result);
+        }
+        return true;
+    }
+
+    if (cmd.command_type == CommandType::BANDWIDTH) {
+        TestResult result = execute_bandwidth(cmd);
+
+        // Only initiator (sender) reports result
         if (cmd.role == TestRole::INITIATOR) {
             report_result(result);
         }
@@ -643,6 +655,174 @@ TestResult Agent::execute_ping_pong(const TestCommand& cmd) {
     return result;
 }
 
+TestResult Agent::execute_bandwidth(const TestCommand& cmd) {
+    TestResult result = {};
+    result.command_seq = cmd.command_seq;
+    result.agent_id = agent_id_;
+    result.status = TestStatus::RUNNING;
+
+    uint32_t total_iterations = cmd.warmup_iterations + cmd.iterations;
+    uint32_t window_size = cmd.window_size > 0 ? cmd.window_size : 64;  // Default 64
+    uint64_t message_size = cmd.message_size > 0 ? cmd.message_size : 4 * 1024 * 1024;  // Default 4MB
+
+    // Validate window_size against buffer capacity
+    size_t required_size = static_cast<size_t>(window_size) * message_size;
+    if (required_size > AGENT_COMMAND_INBOX_OFFSET) {  // Leave room for inbox/mailbox
+        std::cerr << "Agent " << agent_id_ << ": Window size too large for buffer ("
+                  << required_size << " > " << AGENT_COMMAND_INBOX_OFFSET << ")\n";
+        result.status = TestStatus::ERROR;
+        result.error_code = 10;  // Buffer overflow
+        return result;
+    }
+
+    // Peer's buffer address (for writing transfer slots)
+    uintptr_t peer_buffer_addr = peers_[cmd.peer_agent_id].buffer_addr;
+    uintptr_t peer_mailbox_addr = peer_buffer_addr + AGENT_MAILBOX_OFFSET;
+
+    // Our mailbox for receiving ACKs
+    uint8_t* my_mailbox = static_cast<uint8_t*>(test_buffer_) + AGENT_MAILBOX_OFFSET;
+    MailboxHeader* my_header = reinterpret_cast<MailboxHeader*>(my_mailbox);
+
+    // ACK buffer (use a small area in test_buffer for sending ACK)
+    uint8_t* ack_buf = static_cast<uint8_t*>(test_buffer_) + AGENT_COMMAND_INBOX_OFFSET - 64;
+    MailboxHeader* ack_header = reinterpret_cast<MailboxHeader*>(ack_buf);
+
+    // Reset mailbox sequence for this test
+    my_header->sequence = 0;
+    uint64_t my_last_seen_seq = 0;
+
+    // Timeout for waiting on peer
+    constexpr auto POLL_TIMEOUT = std::chrono::seconds(30);  // Longer for bandwidth
+
+    std::cout << "Agent " << agent_id_ << ": Starting bandwidth test"
+              << " role=" << (cmd.role == TestRole::INITIATOR ? "INITIATOR/SENDER" : "RESPONDER/RECEIVER")
+              << " peer=" << cmd.peer_agent_id
+              << " iterations=" << cmd.iterations
+              << " warmup=" << cmd.warmup_iterations
+              << " msg_size=" << message_size
+              << " window_size=" << window_size << "\n";
+
+    std::vector<double> bandwidths;
+    if (cmd.role == TestRole::INITIATOR) {
+        bandwidths.reserve(cmd.iterations);
+    }
+
+    if (cmd.role == TestRole::INITIATOR) {
+        // INITIATOR/SENDER: send window of messages, wait for ACK
+        uint8_t* send_slots = static_cast<uint8_t*>(test_buffer_);
+
+        // Initialize send buffer with pattern
+        for (uint32_t slot = 0; slot < window_size; ++slot) {
+            std::memset(send_slots + slot * message_size, static_cast<int>(slot & 0xFF), message_size);
+        }
+
+        for (uint32_t iter = 0; iter < total_iterations; ++iter) {
+            bool is_warmup = (iter < cmd.warmup_iterations);
+            auto start = std::chrono::steady_clock::now();
+
+            // Send window_size messages to receiver's transfer slots
+            for (uint32_t slot = 0; slot < window_size; ++slot) {
+                uintptr_t remote_slot_addr = peer_buffer_addr + slot * message_size;
+                uint8_t* local_slot = send_slots + slot * message_size;
+
+                if (!nixl_.write_to_remote(peers_[cmd.peer_agent_id].nixl_name,
+                                           local_slot, remote_slot_addr, message_size)) {
+                    result.status = TestStatus::ERROR;
+                    result.error_code = 11;  // Write failed
+                    std::cerr << "Agent " << agent_id_ << ": Write failed at iter " << iter
+                              << " slot " << slot << "\n";
+                    return result;
+                }
+            }
+
+            // Signal receiver that window is complete (via mailbox)
+            ack_header->sequence = iter + 1;
+            if (!nixl_.write_to_remote(peers_[cmd.peer_agent_id].nixl_name,
+                                       ack_buf, peer_mailbox_addr, sizeof(MailboxHeader))) {
+                result.status = TestStatus::ERROR;
+                result.error_code = 12;  // Signal failed
+                return result;
+            }
+
+            // Wait for ACK from receiver
+            auto poll_start = std::chrono::steady_clock::now();
+            while (my_header->sequence <= my_last_seen_seq) {
+                if (std::chrono::steady_clock::now() - poll_start > POLL_TIMEOUT) {
+                    result.status = TestStatus::ERROR;
+                    result.error_code = 13;  // Timeout waiting for ACK
+                    std::cerr << "Agent " << agent_id_ << ": Timeout waiting for ACK at iter " << iter << "\n";
+                    return result;
+                }
+            }
+            my_last_seen_seq = my_header->sequence;
+
+            auto end = std::chrono::steady_clock::now();
+
+            if (!is_warmup) {
+                uint64_t elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+                uint64_t bytes_transferred = static_cast<uint64_t>(window_size) * message_size;
+                // Bandwidth in MB/s = bytes / (elapsed_ns / 1e9) / 1e6 = bytes * 1000 / elapsed_ns
+                double bw_mbps = static_cast<double>(bytes_transferred) * 1000.0 / static_cast<double>(elapsed_ns);
+                bandwidths.push_back(bw_mbps);
+            }
+        }
+
+        // Calculate statistics
+        result.iterations_completed = bandwidths.size();
+        result.total_bytes = static_cast<uint64_t>(window_size) * message_size * cmd.iterations;
+
+        if (!bandwidths.empty()) {
+            double sum = 0;
+            double min_bw = bandwidths[0], max_bw = bandwidths[0];
+            for (auto bw : bandwidths) {
+                sum += bw;
+                if (bw < min_bw) min_bw = bw;
+                if (bw > max_bw) max_bw = bw;
+            }
+            result.bandwidth_mbps = static_cast<uint64_t>(sum / bandwidths.size());
+
+            // Store min/max in latency fields (repurposed for bandwidth)
+            result.min_latency_ns = static_cast<uint64_t>(min_bw);  // Actually min BW
+            result.max_latency_ns = static_cast<uint64_t>(max_bw);  // Actually max BW
+            result.avg_latency_ns = result.bandwidth_mbps;          // Actually avg BW
+        }
+        result.status = TestStatus::COMPLETE;
+
+        std::cout << "Agent " << agent_id_ << ": Bandwidth test complete"
+                  << " avg=" << result.bandwidth_mbps << " MB/s"
+                  << " total_bytes=" << result.total_bytes << "\n";
+
+    } else {
+        // RESPONDER/RECEIVER: wait for signal, send ACK
+        for (uint32_t iter = 0; iter < total_iterations; ++iter) {
+            // Wait for sender's signal that window is complete
+            auto poll_start = std::chrono::steady_clock::now();
+            while (my_header->sequence <= my_last_seen_seq) {
+                if (std::chrono::steady_clock::now() - poll_start > POLL_TIMEOUT) {
+                    result.status = TestStatus::ERROR;
+                    result.error_code = 14;  // Timeout waiting for window
+                    std::cerr << "Agent " << agent_id_ << ": Timeout waiting for window at iter " << iter << "\n";
+                    return result;
+                }
+            }
+            my_last_seen_seq = my_header->sequence;
+
+            // Send ACK to sender
+            ack_header->sequence = iter + 1;
+            if (!nixl_.write_to_remote(peers_[cmd.peer_agent_id].nixl_name,
+                                       ack_buf, peer_mailbox_addr, sizeof(MailboxHeader))) {
+                std::cerr << "Agent " << agent_id_ << ": ACK write failed at iter " << iter << "\n";
+            }
+        }
+        result.status = TestStatus::COMPLETE;
+        result.iterations_completed = total_iterations;
+
+        std::cout << "Agent " << agent_id_ << ": Receiver completed " << total_iterations << " iterations\n";
+    }
+
+    return result;
+}
+
 bool Agent::report_result(const TestResult& result) {
     // Compute result slot address in controller buffer
     uintptr_t result_addr = ctrl_buffer_base_addr_ + ctrl_result_offset_ +
@@ -660,9 +840,16 @@ bool Agent::report_result(const TestResult& result) {
         return false;
     }
 
-    std::cout << "Agent " << agent_id_ << ": Reported result (seq=" << result.command_seq
-              << ", status=" << static_cast<int>(result.status)
-              << ", avg_latency=" << result.avg_latency_ns << "ns)\n";
+    // Log appropriate metrics based on test type
+    if (result.bandwidth_mbps > 0) {
+        std::cout << "Agent " << agent_id_ << ": Reported result (seq=" << result.command_seq
+                  << ", status=" << static_cast<int>(result.status)
+                  << ", bandwidth=" << result.bandwidth_mbps << " MB/s)\n";
+    } else {
+        std::cout << "Agent " << agent_id_ << ": Reported result (seq=" << result.command_seq
+                  << ", status=" << static_cast<int>(result.status)
+                  << ", avg_latency=" << result.avg_latency_ns << "ns)\n";
+    }
     return true;
 }
 

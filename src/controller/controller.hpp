@@ -20,19 +20,39 @@ struct LatencyResult {
     bool success;
 };
 
-/// Configuration for ping-pong tests loaded from JSON
+/// Stores the result of a single bandwidth test
+struct BandwidthResult {
+    uint32_t sender_id;
+    uint32_t receiver_id;
+    uint64_t message_size;
+    uint64_t bandwidth_mbps;
+    uint64_t total_bytes;
+    uint64_t elapsed_ns;
+    bool success;
+};
+
+/// Configuration for tests loaded from JSON
 struct TestConfig {
-    // Ping-pong test parameters
+    // Ping-pong latency test parameters
     uint64_t message_size = 64;           // Payload size in bytes
     uint32_t iterations = 10;             // Number of measured iterations
     uint32_t warmup_iterations = 5;       // Number of warmup iterations
     uint32_t result_timeout_sec = 30;     // Timeout waiting for results
 
+    // Bandwidth test parameters
+    std::vector<uint64_t> bw_message_sizes = {1024, 4096, 16384, 65536, 262144, 1048576, 4194304};  // 1K to 4M
+    uint32_t bw_iterations = 100;         // Number of measured windows
+    uint32_t bw_warmup_iterations = 10;   // Warmup windows
+    uint32_t bw_window_size = 64;         // Outstanding messages per window
+
     // Output configuration
     std::string output_csv_path = "/tmp/latency_matrix.csv";  // Default output path
+    std::string bandwidth_csv_path = "/tmp/bandwidth_matrix.csv";  // Bandwidth peak matrix
+    std::string bandwidth_detailed_csv_path = "/tmp/bandwidth_detailed.csv";  // All msg sizes
 
     // Test selection (empty = test all pairs)
     bool test_all_pairs = true;           // If true, test all agent pairs
+    bool run_bandwidth_tests = true;      // If true, run bandwidth tests after latency
 
     /// Load config from JSON file
     /// @param filepath Path to JSON config file
@@ -109,6 +129,19 @@ public:
                               uint64_t message_size, uint32_t iterations,
                               uint32_t warmup_iterations = 10);
 
+    /// Issue a unidirectional bandwidth test between two agents.
+    /// INITIATOR (sender) sends window_size messages, RESPONDER (receiver) ACKs.
+    /// @param sender_id Agent that sends data (INITIATOR role)
+    /// @param receiver_id Agent that receives data (RESPONDER role)
+    /// @param message_size Payload size in bytes per message
+    /// @param iterations Number of measured windows
+    /// @param warmup_iterations Number of warmup windows
+    /// @param window_size Number of outstanding messages per window
+    /// @return true if commands written successfully
+    bool issue_bandwidth_test(uint32_t sender_id, uint32_t receiver_id,
+                              uint64_t message_size, uint32_t iterations,
+                              uint32_t warmup_iterations, uint32_t window_size);
+
     /// Send SHUTDOWN command to all registered agents.
     /// Agents will exit their command loops upon receiving this.
     /// @return true if commands sent successfully to all agents
@@ -131,11 +164,19 @@ public:
     /// @return Pointer to result, or nullptr if not available
     const TestResult* get_result(uint32_t agent_id) const;
 
-    /// Store a test result for later CSV output.
+    /// Store a latency test result for later CSV output.
     /// @param initiator_id Agent that initiated the test
     /// @param responder_id Agent that responded
     /// @param result Test result from the initiator
     void store_test_result(uint32_t initiator_id, uint32_t responder_id, const TestResult& result);
+
+    /// Store a bandwidth test result for later CSV output.
+    /// @param sender_id Agent that sent data
+    /// @param receiver_id Agent that received data
+    /// @param message_size Message size used in test
+    /// @param result Test result from the sender
+    void store_bandwidth_result(uint32_t sender_id, uint32_t receiver_id,
+                                 uint64_t message_size, const TestResult& result);
 
     /// Log the latency matrix in CSV format.
     /// Format: NxN matrix, row i col j = latency from node i to node j (ns)
@@ -143,8 +184,22 @@ public:
     /// @param output Output stream (e.g., std::cout or file)
     void log_latency_matrix_csv(std::ostream& output) const;
 
+    /// Log the bandwidth matrix in CSV format.
+    /// Format: NxN matrix, row i col j = bandwidth from node i to node j (MB/s)
+    /// Diagonal is 0, unmeasured pairs are -1
+    /// @param output Output stream (e.g., std::cout or file)
+    void log_bandwidth_matrix_csv(std::ostream& output) const;
+
+    /// Log detailed bandwidth results (all message sizes) in CSV format.
+    /// Format: sender,receiver,msg_size,bandwidth_mbps
+    /// @param output Output stream (e.g., std::cout or file)
+    void log_bandwidth_detailed_csv(std::ostream& output) const;
+
     /// Get stored latency results.
     const std::vector<LatencyResult>& latency_results() const { return latency_results_; }
+
+    /// Get stored bandwidth results.
+    const std::vector<BandwidthResult>& bandwidth_results() const { return bandwidth_results_; }
 
 private:
     /// Load metadata for a newly registered agent so we can send it notifications.
@@ -158,7 +213,8 @@ private:
     uint64_t command_seq_ = 0;
     std::vector<std::string> loaded_agent_names_;  // Agent names loaded for notifications
     std::vector<bool> agent_metadata_loaded_;       // Track which agents have been loaded
-    std::vector<LatencyResult> latency_results_;    // Stored test results for CSV output
+    std::vector<LatencyResult> latency_results_;    // Stored latency results for CSV output
+    std::vector<BandwidthResult> bandwidth_results_;  // Stored bandwidth results for CSV output
 };
 
 } // namespace nixl_topo

@@ -41,7 +41,7 @@ enum class CommandType : uint32_t {
     NONE = 0,
     SHUTDOWN = 1,
     PING_PONG_LATENCY = 2,
-    // Future: BANDWIDTH_TEST, etc.
+    BANDWIDTH = 3,              // Unidirectional streaming bandwidth test
 };
 
 // Agent role in test
@@ -181,7 +181,8 @@ struct TestCommand {
     uint32_t warmup_iterations; // 4 bytes
     uint64_t message_size;      // 8 bytes - payload size per iteration
     uint32_t iterations;        // 4 bytes - measured iterations
-    uint8_t padding[28];        // 28 bytes - pad to 64
+    uint32_t window_size;       // 4 bytes - for BANDWIDTH: outstanding transfers
+    uint8_t padding[24];        // 24 bytes - pad to 64
     // Note: peer_buffer_addr removed - agents get peer address from discover_peers()
 
     // Convert from wire format (big-endian) to host format
@@ -193,6 +194,7 @@ struct TestCommand {
         warmup_iterations = from_wire32(warmup_iterations);
         message_size = from_wire64(message_size);
         iterations = from_wire32(iterations);
+        window_size = from_wire32(window_size);
     }
 
     // Convert from host format to wire format (big-endian)
@@ -204,6 +206,7 @@ struct TestCommand {
         warmup_iterations = to_wire32(warmup_iterations);
         message_size = to_wire64(message_size);
         iterations = to_wire32(iterations);
+        window_size = to_wire32(window_size);
     }
 };
 
@@ -234,7 +237,9 @@ struct TestResult {
     uint64_t avg_latency_ns;       // 8 bytes
     uint64_t total_bytes;          // 8 bytes - total data transferred
     uint64_t error_code;           // 8 bytes - 0 if no error
-    uint8_t padding[64];           // 64 bytes - pad to 128
+    uint64_t elapsed_ns;           // 8 bytes - total elapsed time (for bandwidth)
+    uint64_t bandwidth_mbps;       // 8 bytes - bandwidth in MB/s (for bandwidth test)
+    uint8_t padding[48];           // 48 bytes - pad to 128
 
     // Convert from wire format (big-endian) to host format
     void from_wire() {
@@ -247,6 +252,8 @@ struct TestResult {
         avg_latency_ns = from_wire64(avg_latency_ns);
         total_bytes = from_wire64(total_bytes);
         error_code = from_wire64(error_code);
+        elapsed_ns = from_wire64(elapsed_ns);
+        bandwidth_mbps = from_wire64(bandwidth_mbps);
     }
 
     // Convert from host format to wire format (big-endian)
@@ -260,6 +267,8 @@ struct TestResult {
         avg_latency_ns = to_wire64(avg_latency_ns);
         total_bytes = to_wire64(total_bytes);
         error_code = to_wire64(error_code);
+        elapsed_ns = to_wire64(elapsed_ns);
+        bandwidth_mbps = to_wire64(bandwidth_mbps);
     }
 };
 

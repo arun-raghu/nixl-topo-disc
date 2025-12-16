@@ -304,6 +304,98 @@ bool Controller::issue_ping_pong_test(uint32_t initiator_id, uint32_t responder_
     return true;
 }
 
+bool Controller::issue_bandwidth_test(uint32_t sender_id, uint32_t receiver_id,
+                                       uint64_t message_size, uint32_t iterations,
+                                       uint32_t warmup_iterations, uint32_t window_size) {
+    // Validate
+    if (!initialized_) return false;
+    if (sender_id >= num_agents_ || receiver_id >= num_agents_) return false;
+    if (sender_id == receiver_id) return false;
+
+    // Ensure agent metadata is loaded
+    if (!agent_metadata_loaded_[sender_id] || !agent_metadata_loaded_[receiver_id]) {
+        return false;
+    }
+
+    ++command_seq_;
+
+    // Get peer buffer addresses from agent slots
+    const auto* sender_slot = buffer_.agent_slot(sender_id);
+    const auto* receiver_slot = buffer_.agent_slot(receiver_id);
+    if (!sender_slot || !receiver_slot) return false;
+
+    uint64_t sender_buf = from_wire64(sender_slot->buffer_base_addr);
+    uint64_t receiver_buf = from_wire64(receiver_slot->buffer_base_addr);
+
+    std::cout << "Controller: issue_bandwidth_test debug:\n"
+              << "  sender_id=" << sender_id << " name='" << loaded_agent_names_[sender_id] << "'\n"
+              << "  receiver_id=" << receiver_id << " name='" << loaded_agent_names_[receiver_id] << "'\n"
+              << "  sender_buf=0x" << std::hex << sender_buf << "\n"
+              << "  receiver_buf=0x" << std::hex << receiver_buf << std::dec << "\n"
+              << "  message_size=" << message_size << " window_size=" << window_size << "\n";
+
+    // Use registered command area for RDMA writes
+    uint8_t* cmd_buf = static_cast<uint8_t*>(buffer_.cmd_slot(0));
+
+    // Build command for receiver (send first, must be ready before sender starts)
+    TestCommand recv_cmd = {};
+    recv_cmd.command_seq = command_seq_;
+    recv_cmd.command_type = CommandType::BANDWIDTH;
+    recv_cmd.role = TestRole::RESPONDER;
+    recv_cmd.peer_agent_id = sender_id;
+    recv_cmd.message_size = message_size;
+    recv_cmd.iterations = iterations;
+    recv_cmd.warmup_iterations = warmup_iterations;
+    recv_cmd.window_size = window_size;
+    recv_cmd.to_wire();
+
+    // Copy to registered buffer for RDMA
+    std::memcpy(cmd_buf, &recv_cmd, sizeof(recv_cmd));
+
+    // RDMA write to receiver's command inbox
+    uint64_t recv_inbox_addr = receiver_buf + AGENT_COMMAND_INBOX_OFFSET;
+    std::cout << "  Writing to receiver inbox at 0x" << std::hex << recv_inbox_addr << std::dec << "\n";
+    if (!nixl_.write_to_remote(loaded_agent_names_[receiver_id],
+                               cmd_buf, recv_inbox_addr, sizeof(recv_cmd))) {
+        std::cerr << "Controller: Failed to write command to receiver " << receiver_id << "\n";
+        return false;
+    }
+
+    // Small delay to ensure receiver is ready before sender starts
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
+
+    // Build command for sender
+    TestCommand send_cmd = {};
+    send_cmd.command_seq = command_seq_;
+    send_cmd.command_type = CommandType::BANDWIDTH;
+    send_cmd.role = TestRole::INITIATOR;
+    send_cmd.peer_agent_id = receiver_id;
+    send_cmd.message_size = message_size;
+    send_cmd.iterations = iterations;
+    send_cmd.warmup_iterations = warmup_iterations;
+    send_cmd.window_size = window_size;
+    send_cmd.to_wire();
+
+    // Copy to registered buffer for RDMA
+    std::memcpy(cmd_buf, &send_cmd, sizeof(send_cmd));
+
+    // RDMA write to sender's command inbox
+    uint64_t send_inbox_addr = sender_buf + AGENT_COMMAND_INBOX_OFFSET;
+    std::cout << "  Writing to sender inbox at 0x" << std::hex << send_inbox_addr << std::dec << "\n";
+    if (!nixl_.write_to_remote(loaded_agent_names_[sender_id],
+                               cmd_buf, send_inbox_addr, sizeof(send_cmd))) {
+        std::cerr << "Controller: Failed to write command to sender " << sender_id << "\n";
+        return false;
+    }
+
+    std::cout << "Controller: Issued bandwidth test (seq=" << command_seq_
+              << ") sender=" << sender_id << " receiver=" << receiver_id
+              << " msg_size=" << message_size << " window=" << window_size
+              << " iterations=" << iterations << "\n";
+
+    return true;
+}
+
 bool Controller::shutdown_agents() {
     if (!initialized_) return false;
 
@@ -474,6 +566,22 @@ void Controller::store_test_result(uint32_t initiator_id, uint32_t responder_id,
     latency_results_.push_back(lr);
 }
 
+void Controller::store_bandwidth_result(uint32_t sender_id, uint32_t receiver_id,
+                                         uint64_t message_size, const TestResult& result) {
+    BandwidthResult br;
+    br.sender_id = sender_id;
+    br.receiver_id = receiver_id;
+    br.message_size = message_size;
+    br.bandwidth_mbps = from_wire64(result.bandwidth_mbps);
+    br.total_bytes = from_wire64(result.total_bytes);
+    br.elapsed_ns = from_wire64(result.elapsed_ns);
+
+    auto status = static_cast<TestStatus>(from_wire32(static_cast<uint32_t>(result.status)));
+    br.success = (status == TestStatus::COMPLETE);
+
+    bandwidth_results_.push_back(br);
+}
+
 void Controller::log_latency_matrix_csv(std::ostream& output) const {
     // Build NxN symmetric matrix from stored results
     // Since ping-pong measures RTT, matrix[i][j] = matrix[j][i]
@@ -498,6 +606,52 @@ void Controller::log_latency_matrix_csv(std::ostream& output) const {
             output << matrix[i][j];
         }
         output << "\n";
+    }
+}
+
+void Controller::log_bandwidth_matrix_csv(std::ostream& output) const {
+    // Build NxN matrix from stored results
+    // Bandwidth is unidirectional: matrix[i][j] = peak bandwidth from node i to node j
+    std::vector<std::vector<int64_t>> matrix(num_agents_,
+                                              std::vector<int64_t>(num_agents_, -1));
+
+    // Set diagonal to 0 (no self-transfer)
+    for (uint32_t i = 0; i < num_agents_; ++i) {
+        matrix[i][i] = 0;
+    }
+
+    // Fill in peak bandwidth values (max across all message sizes)
+    for (const auto& br : bandwidth_results_) {
+        if (br.success && br.sender_id < num_agents_ && br.receiver_id < num_agents_) {
+            int64_t bw = static_cast<int64_t>(br.bandwidth_mbps);
+            // Keep the maximum (peak) bandwidth for this pair
+            if (bw > matrix[br.sender_id][br.receiver_id]) {
+                matrix[br.sender_id][br.receiver_id] = bw;
+            }
+        }
+    }
+
+    // Output CSV format
+    output << "# Bandwidth matrix (MB/s) - unidirectional, peak values\n";
+    output << "# Row i, Column j = peak bandwidth from node i to node j\n";
+    for (uint32_t i = 0; i < num_agents_; ++i) {
+        for (uint32_t j = 0; j < num_agents_; ++j) {
+            if (j > 0) output << ",";
+            output << matrix[i][j];
+        }
+        output << "\n";
+    }
+}
+
+void Controller::log_bandwidth_detailed_csv(std::ostream& output) const {
+    output << "sender,receiver,msg_size,bandwidth_mbps\n";
+    for (const auto& br : bandwidth_results_) {
+        if (br.success) {
+            output << br.sender_id << ","
+                   << br.receiver_id << ","
+                   << br.message_size << ","
+                   << br.bandwidth_mbps << "\n";
+        }
     }
 }
 
@@ -538,17 +692,46 @@ TestConfig TestConfig::from_json(const std::string& filepath) {
         }
     }
 
+    // Parse bandwidth test parameters
+    if (j.contains("bandwidth")) {
+        auto& bw = j["bandwidth"];
+        if (bw.contains("message_sizes")) {
+            config.bw_message_sizes.clear();
+            for (const auto& size : bw["message_sizes"]) {
+                config.bw_message_sizes.push_back(size.get<uint64_t>());
+            }
+        }
+        if (bw.contains("iterations")) {
+            config.bw_iterations = bw["iterations"].get<uint32_t>();
+        }
+        if (bw.contains("warmup_iterations")) {
+            config.bw_warmup_iterations = bw["warmup_iterations"].get<uint32_t>();
+        }
+        if (bw.contains("window_size")) {
+            config.bw_window_size = bw["window_size"].get<uint32_t>();
+        }
+    }
+
     // Parse output configuration
     if (j.contains("output")) {
         auto& out = j["output"];
         if (out.contains("csv_path")) {
             config.output_csv_path = out["csv_path"].get<std::string>();
         }
+        if (out.contains("bandwidth_csv_path")) {
+            config.bandwidth_csv_path = out["bandwidth_csv_path"].get<std::string>();
+        }
+        if (out.contains("bandwidth_detailed_csv_path")) {
+            config.bandwidth_detailed_csv_path = out["bandwidth_detailed_csv_path"].get<std::string>();
+        }
     }
 
     // Parse test selection
     if (j.contains("test_all_pairs")) {
         config.test_all_pairs = j["test_all_pairs"].get<bool>();
+    }
+    if (j.contains("run_bandwidth_tests")) {
+        config.run_bandwidth_tests = j["run_bandwidth_tests"].get<bool>();
     }
 
 #else
@@ -560,12 +743,34 @@ TestConfig TestConfig::from_json(const std::string& filepath) {
 
 void TestConfig::print() const {
     std::cout << "Test Configuration:\n"
-              << "  message_size:       " << message_size << " bytes\n"
-              << "  iterations:         " << iterations << "\n"
-              << "  warmup_iterations:  " << warmup_iterations << "\n"
-              << "  result_timeout_sec: " << result_timeout_sec << "\n"
-              << "  output_csv_path:    " << output_csv_path << "\n"
-              << "  test_all_pairs:     " << (test_all_pairs ? "true" : "false") << "\n";
+              << "  Ping-pong latency:\n"
+              << "    message_size:       " << message_size << " bytes\n"
+              << "    iterations:         " << iterations << "\n"
+              << "    warmup_iterations:  " << warmup_iterations << "\n"
+              << "    result_timeout_sec: " << result_timeout_sec << "\n"
+              << "  Bandwidth:\n"
+              << "    message_sizes:      [";
+    for (size_t i = 0; i < bw_message_sizes.size(); ++i) {
+        if (i > 0) std::cout << ", ";
+        if (bw_message_sizes[i] >= 1048576) {
+            std::cout << (bw_message_sizes[i] / 1048576) << "M";
+        } else if (bw_message_sizes[i] >= 1024) {
+            std::cout << (bw_message_sizes[i] / 1024) << "K";
+        } else {
+            std::cout << bw_message_sizes[i];
+        }
+    }
+    std::cout << "]\n"
+              << "    iterations:         " << bw_iterations << "\n"
+              << "    warmup_iterations:  " << bw_warmup_iterations << "\n"
+              << "    window_size:        " << bw_window_size << "\n"
+              << "  Output:\n"
+              << "    latency_csv_path:   " << output_csv_path << "\n"
+              << "    bandwidth_csv_path: " << bandwidth_csv_path << "\n"
+              << "    bandwidth_detailed: " << bandwidth_detailed_csv_path << "\n"
+              << "  Options:\n"
+              << "    test_all_pairs:     " << (test_all_pairs ? "true" : "false") << "\n"
+              << "    run_bandwidth_tests:" << (run_bandwidth_tests ? "true" : "false") << "\n";
 }
 
 } // namespace nixl_topo

@@ -35,10 +35,18 @@ void print_usage(const char* program_name) {
               << "      \"warmup_iterations\": 5,\n"
               << "      \"result_timeout_sec\": 30\n"
               << "    },\n"
-              << "    \"output\": {\n"
-              << "      \"csv_path\": \"/tmp/latency_matrix.csv\"\n"
+              << "    \"bandwidth\": {\n"
+              << "      \"message_sizes\": [1024, 4096, 16384, 65536, 262144, 1048576, 4194304],\n"
+              << "      \"iterations\": 100,\n"
+              << "      \"warmup_iterations\": 10,\n"
+              << "      \"window_size\": 64\n"
               << "    },\n"
-              << "    \"test_all_pairs\": true\n"
+              << "    \"output\": {\n"
+              << "      \"csv_path\": \"/tmp/latency_matrix.csv\",\n"
+              << "      \"bandwidth_csv_path\": \"/tmp/bandwidth_matrix.csv\"\n"
+              << "    },\n"
+              << "    \"test_all_pairs\": true,\n"
+              << "    \"run_bandwidth_tests\": true\n"
               << "  }\n";
 }
 
@@ -312,10 +320,11 @@ int main(int argc, char* argv[]) {
 
     // Execute tests using config parameters
     if (!g_shutdown_requested && num_agents >= 2) {
-        std::cout << "\n=== Executing Tests ===\n";
-
         auto result_timeout = std::chrono::seconds(config.result_timeout_sec);
         uint32_t test_num = 0;
+
+        // === Latency Tests ===
+        std::cout << "\n=== Executing Latency Tests ===\n";
 
         // Test all unique pairs (i < j only, since ping-pong measures RTT)
         for (uint32_t i = 0; i < num_agents && !g_shutdown_requested; ++i) {
@@ -326,28 +335,28 @@ int main(int argc, char* argv[]) {
                 }
 
                 ++test_num;
-                std::cout << "\n--- Test " << test_num << ": initiator=" << i
+                std::cout << "\n--- Latency Test " << test_num << ": initiator=" << i
                           << " responder=" << j << " ---\n";
 
                 if (controller.issue_ping_pong_test(i, j, config.message_size,
                                                      config.iterations, config.warmup_iterations)) {
                     std::cout << "Waiting for results...\n";
                     if (controller.wait_for_results({i}, controller.command_seq(), result_timeout)) {
-                        std::cout << "Test " << test_num << " completed successfully!\n";
+                        std::cout << "Latency test " << test_num << " completed successfully!\n";
                         const auto* result = controller.get_result(i);
                         if (result) {
                             controller.store_test_result(i, j, *result);
                         }
                     } else {
-                        std::cerr << "Error: Timeout waiting for test " << test_num << " results\n";
+                        std::cerr << "Error: Timeout waiting for latency test " << test_num << " results\n";
                     }
                 } else {
-                    std::cerr << "Error: Failed to issue test " << test_num << "\n";
+                    std::cerr << "Error: Failed to issue latency test " << test_num << "\n";
                 }
             }
         }
 
-        std::cout << "\n=== Tests Complete ===\n";
+        std::cout << "\n=== Latency Tests Complete ===\n";
 
         // Write latency matrix to CSV file
         std::ofstream csv_file(config.output_csv_path);
@@ -361,6 +370,117 @@ int main(int argc, char* argv[]) {
             std::cout << "\n=== Latency Matrix (CSV) ===\n";
             controller.log_latency_matrix_csv(std::cout);
             std::cout << "=== End Latency Matrix ===\n";
+        }
+
+        // === Bandwidth Tests ===
+        if (config.run_bandwidth_tests && !g_shutdown_requested) {
+            std::cout << "\n=== Executing Bandwidth Tests ===\n";
+            std::cout << "Message sizes: " << config.bw_message_sizes.size() << " sizes\n";
+            test_num = 0;
+
+            // Bandwidth is unidirectional, so test both directions (i->j and j->i)
+            // For each pair, sweep through all message sizes
+            for (uint32_t i = 0; i < num_agents && !g_shutdown_requested; ++i) {
+                for (uint32_t j = 0; j < num_agents && !g_shutdown_requested; ++j) {
+                    if (i == j) continue;  // Skip self
+
+                    if (!controller.buffer().is_agent_registered(i) ||
+                        !controller.buffer().is_agent_registered(j)) {
+                        continue;  // Skip unregistered agents
+                    }
+
+                    ++test_num;
+                    std::cout << "\n--- Bandwidth Test " << test_num << ": sender=" << i
+                              << " -> receiver=" << j << " (sweeping "
+                              << config.bw_message_sizes.size() << " sizes) ---\n";
+
+                    uint64_t peak_bw = 0;
+                    uint64_t peak_msg_size = 0;
+
+                    // Sweep through message sizes
+                    for (uint64_t msg_size : config.bw_message_sizes) {
+                        if (g_shutdown_requested) break;
+
+                        // Check if window_size * msg_size fits in buffer
+                        size_t required = static_cast<size_t>(config.bw_window_size) * msg_size;
+                        uint32_t effective_window = config.bw_window_size;
+                        if (required > nixl_topo::AGENT_COMMAND_INBOX_OFFSET) {
+                            // Reduce window size to fit
+                            effective_window = static_cast<uint32_t>(
+                                nixl_topo::AGENT_COMMAND_INBOX_OFFSET / msg_size);
+                            if (effective_window < 1) {
+                                std::cerr << "  Skipping " << msg_size << " bytes: too large for buffer\n";
+                                continue;
+                            }
+                            std::cout << "  Note: Using window=" << effective_window
+                                      << " for " << msg_size << " byte messages\n";
+                        }
+
+                        if (controller.issue_bandwidth_test(i, j, msg_size,
+                                                             config.bw_iterations, config.bw_warmup_iterations,
+                                                             effective_window)) {
+                            auto bw_timeout = std::chrono::seconds(config.result_timeout_sec * 2);
+                            if (controller.wait_for_results({i}, controller.command_seq(), bw_timeout)) {
+                                const auto* result = controller.get_result(i);
+                                if (result) {
+                                    uint64_t bw = nixl_topo::from_wire64(result->bandwidth_mbps);
+
+                                    // Format message size for display
+                                    std::string size_str;
+                                    if (msg_size >= 1048576) {
+                                        size_str = std::to_string(msg_size / 1048576) + "M";
+                                    } else if (msg_size >= 1024) {
+                                        size_str = std::to_string(msg_size / 1024) + "K";
+                                    } else {
+                                        size_str = std::to_string(msg_size);
+                                    }
+
+                                    std::cout << "  " << size_str << ": " << bw << " MB/s\n";
+
+                                    // Track peak bandwidth
+                                    if (bw > peak_bw) {
+                                        peak_bw = bw;
+                                        peak_msg_size = msg_size;
+                                    }
+
+                                    // Store result for this message size
+                                    controller.store_bandwidth_result(i, j, msg_size, *result);
+                                }
+                            } else {
+                                std::cerr << "  " << msg_size << ": timeout\n";
+                            }
+                        } else {
+                            std::cerr << "  " << msg_size << ": failed to issue\n";
+                        }
+                    }
+
+                    if (peak_bw > 0) {
+                        std::cout << "  Peak: " << peak_bw << " MB/s @ " << peak_msg_size << " bytes\n";
+                    }
+                }
+            }
+
+            std::cout << "\n=== Bandwidth Tests Complete ===\n";
+
+            // Write bandwidth matrix to CSV file (uses peak bandwidth per pair)
+            std::ofstream bw_csv_file(config.bandwidth_csv_path);
+            if (bw_csv_file.is_open()) {
+                controller.log_bandwidth_matrix_csv(bw_csv_file);
+                bw_csv_file.close();
+                std::cout << "Bandwidth matrix written to: " << config.bandwidth_csv_path << "\n";
+            } else {
+                std::cerr << "Error: Could not open output file: " << config.bandwidth_csv_path << "\n";
+            }
+
+            // Write detailed bandwidth CSV (all message sizes)
+            std::ofstream bw_detailed_file(config.bandwidth_detailed_csv_path);
+            if (bw_detailed_file.is_open()) {
+                controller.log_bandwidth_detailed_csv(bw_detailed_file);
+                bw_detailed_file.close();
+                std::cout << "Bandwidth details written to: " << config.bandwidth_detailed_csv_path << "\n";
+            } else {
+                std::cerr << "Error: Could not open output file: " << config.bandwidth_detailed_csv_path << "\n";
+            }
         }
     }
 
