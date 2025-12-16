@@ -52,6 +52,11 @@ public:
     /// Writes RENDEZVOUS_COMPLETE notification to all agent notification slots.
     void signal_rendezvous_complete();
 
+    /// Wait for all agents to complete peer discovery.
+    /// @param timeout Maximum time to wait
+    /// @return true if all agents reported peer discovery complete, false on timeout
+    bool wait_for_peer_discovery(std::chrono::milliseconds timeout);
+
     /// Shutdown the controller and release resources.
     void shutdown();
 
@@ -69,6 +74,11 @@ public:
     bool issue_ping_pong_test(uint32_t initiator_id, uint32_t responder_id,
                               uint64_t message_size, uint32_t iterations,
                               uint32_t warmup_iterations = 10);
+
+    /// Send SHUTDOWN command to all registered agents.
+    /// Agents will exit their command loops upon receiving this.
+    /// @return true if commands sent successfully to all agents
+    bool shutdown_agents();
 
     /// Wait for test results from specified agents.
     /// @param agent_ids Agents to wait for

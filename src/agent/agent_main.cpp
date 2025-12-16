@@ -71,6 +71,13 @@ int main() {
     }
     std::cout << "Peer discovery complete.\n";
 
+    // Notify controller that peer discovery is complete
+    if (!agent.notify_peer_discovery_complete()) {
+        std::cerr << "Error: Failed to notify controller of peer discovery\n";
+        agent.shutdown();
+        return 1;
+    }
+
 #ifdef ENABLE_PEER_TRANSFER_TEST
     // Verify data transfer with one peer (agent 0 tests with agent 1)
     if (agent.num_agents() > 1 && agent.agent_id() == 0) {

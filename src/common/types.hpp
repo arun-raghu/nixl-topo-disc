@@ -39,7 +39,8 @@ enum class NotificationType : uint32_t {
 
 enum class CommandType : uint32_t {
     NONE = 0,
-    PING_PONG_LATENCY = 1,
+    SHUTDOWN = 1,
+    PING_PONG_LATENCY = 2,
     // Future: BANDWIDTH_TEST, etc.
 };
 
@@ -178,10 +179,10 @@ struct TestCommand {
     TestRole role;              // 4 bytes - INITIATOR or RESPONDER
     uint32_t peer_agent_id;     // 4 bytes - the other agent in the test
     uint32_t warmup_iterations; // 4 bytes
-    uint64_t peer_buffer_addr;  // 8 bytes - peer's buffer base address
     uint64_t message_size;      // 8 bytes - payload size per iteration
     uint32_t iterations;        // 4 bytes - measured iterations
-    uint8_t padding[20];        // 20 bytes - pad to 64
+    uint8_t padding[28];        // 28 bytes - pad to 64
+    // Note: peer_buffer_addr removed - agents get peer address from discover_peers()
 
     // Convert from wire format (big-endian) to host format
     void from_wire() {
@@ -190,7 +191,6 @@ struct TestCommand {
         role = static_cast<TestRole>(from_wire32(static_cast<uint32_t>(role)));
         peer_agent_id = from_wire32(peer_agent_id);
         warmup_iterations = from_wire32(warmup_iterations);
-        peer_buffer_addr = from_wire64(peer_buffer_addr);
         message_size = from_wire64(message_size);
         iterations = from_wire32(iterations);
     }
@@ -202,7 +202,6 @@ struct TestCommand {
         role = static_cast<TestRole>(to_wire32(static_cast<uint32_t>(role)));
         peer_agent_id = to_wire32(peer_agent_id);
         warmup_iterations = to_wire32(warmup_iterations);
-        peer_buffer_addr = to_wire64(peer_buffer_addr);
         message_size = to_wire64(message_size);
         iterations = to_wire32(iterations);
     }
@@ -296,5 +295,6 @@ constexpr const char* CONTROLLER_NAME = "controller";
 
 constexpr const char* NOTIF_AGENT_REGISTERED = "AGENT_REGISTERED";
 constexpr const char* NOTIF_RENDEZVOUS_COMPLETE = "RENDEZVOUS_COMPLETE";
+constexpr const char* NOTIF_PEER_DISCOVERY_COMPLETE = "PEER_DISCOVERY_COMPLETE";
 
 } // namespace nixl_topo

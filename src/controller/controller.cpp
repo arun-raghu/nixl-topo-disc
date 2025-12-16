@@ -144,6 +144,56 @@ void Controller::signal_rendezvous_complete() {
     }
 }
 
+bool Controller::wait_for_peer_discovery(std::chrono::milliseconds timeout) {
+    if (!initialized_) {
+        return false;
+    }
+
+    std::cout << "Controller: Waiting for peer discovery from all agents...\n";
+
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    std::vector<bool> peer_discovery_done(num_agents_, false);
+    uint32_t done_count = 0;
+
+    while (std::chrono::steady_clock::now() < deadline && done_count < num_agents_) {
+        // Check for notifications
+        auto notifications = nixl_.get_notifications();
+
+        for (const auto& [sender, msg] : notifications) {
+            if (msg == NOTIF_PEER_DISCOVERY_COMPLETE) {
+                // Find which agent sent this
+                for (uint32_t i = 0; i < num_agents_; ++i) {
+                    if (loaded_agent_names_[i] == sender && !peer_discovery_done[i]) {
+                        peer_discovery_done[i] = true;
+                        done_count++;
+                        std::cout << "Controller: Agent " << i << " (" << sender
+                                  << ") completed peer discovery (" << done_count
+                                  << "/" << num_agents_ << ")\n";
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (done_count < num_agents_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
+    if (done_count == num_agents_) {
+        std::cout << "Controller: All agents completed peer discovery!\n";
+        return true;
+    }
+
+    std::cerr << "Controller: Timeout waiting for peer discovery\n";
+    for (uint32_t i = 0; i < num_agents_; ++i) {
+        if (!peer_discovery_done[i]) {
+            std::cerr << "  Agent " << i << ": not done\n";
+        }
+    }
+    return false;
+}
+
 void Controller::shutdown() {
     if (!initialized_) {
         return;
@@ -182,22 +232,34 @@ bool Controller::issue_ping_pong_test(uint32_t initiator_id, uint32_t responder_
     uint64_t initiator_buf = from_wire64(initiator_slot->buffer_base_addr);
     uint64_t responder_buf = from_wire64(responder_slot->buffer_base_addr);
 
+    std::cout << "Controller: issue_ping_pong_test debug:\n"
+              << "  initiator_id=" << initiator_id << " name='" << loaded_agent_names_[initiator_id] << "'\n"
+              << "  responder_id=" << responder_id << " name='" << loaded_agent_names_[responder_id] << "'\n"
+              << "  initiator_buf=0x" << std::hex << initiator_buf << "\n"
+              << "  responder_buf=0x" << std::hex << responder_buf << std::dec << "\n";
+
+    // Use registered command area for RDMA writes (stack memory won't work for RDMA)
+    uint8_t* cmd_buf = static_cast<uint8_t*>(buffer_.cmd_slot(0));
+
     // Build command for responder (send first)
     TestCommand resp_cmd = {};
     resp_cmd.command_seq = command_seq_;
     resp_cmd.command_type = CommandType::PING_PONG_LATENCY;
     resp_cmd.role = TestRole::RESPONDER;
     resp_cmd.peer_agent_id = initiator_id;
-    resp_cmd.peer_buffer_addr = initiator_buf;
     resp_cmd.message_size = message_size;
     resp_cmd.iterations = iterations;
     resp_cmd.warmup_iterations = warmup_iterations;
     resp_cmd.to_wire();
 
+    // Copy to registered buffer for RDMA
+    std::memcpy(cmd_buf, &resp_cmd, sizeof(resp_cmd));
+
     // RDMA write to responder's command inbox (responder gets command first)
     uint64_t resp_inbox_addr = responder_buf + AGENT_COMMAND_INBOX_OFFSET;
+    std::cout << "  Writing to responder inbox at 0x" << std::hex << resp_inbox_addr << std::dec << "\n";
     if (!nixl_.write_to_remote(loaded_agent_names_[responder_id],
-                               &resp_cmd, resp_inbox_addr, sizeof(resp_cmd))) {
+                               cmd_buf, resp_inbox_addr, sizeof(resp_cmd))) {
         std::cerr << "Controller: Failed to write command to responder " << responder_id << "\n";
         return false;
     }
@@ -211,16 +273,19 @@ bool Controller::issue_ping_pong_test(uint32_t initiator_id, uint32_t responder_
     init_cmd.command_type = CommandType::PING_PONG_LATENCY;
     init_cmd.role = TestRole::INITIATOR;
     init_cmd.peer_agent_id = responder_id;
-    init_cmd.peer_buffer_addr = responder_buf;
     init_cmd.message_size = message_size;
     init_cmd.iterations = iterations;
     init_cmd.warmup_iterations = warmup_iterations;
     init_cmd.to_wire();
 
+    // Copy to registered buffer for RDMA
+    std::memcpy(cmd_buf, &init_cmd, sizeof(init_cmd));
+
     // RDMA write to initiator's command inbox
     uint64_t init_inbox_addr = initiator_buf + AGENT_COMMAND_INBOX_OFFSET;
+    std::cout << "  Writing to initiator inbox at 0x" << std::hex << init_inbox_addr << std::dec << "\n";
     if (!nixl_.write_to_remote(loaded_agent_names_[initiator_id],
-                               &init_cmd, init_inbox_addr, sizeof(init_cmd))) {
+                               cmd_buf, init_inbox_addr, sizeof(init_cmd))) {
         std::cerr << "Controller: Failed to write command to initiator " << initiator_id << "\n";
         return false;
     }
@@ -230,6 +295,51 @@ bool Controller::issue_ping_pong_test(uint32_t initiator_id, uint32_t responder_
               << " msg_size=" << message_size << " iterations=" << iterations << "\n";
 
     return true;
+}
+
+bool Controller::shutdown_agents() {
+    if (!initialized_) return false;
+
+    std::cout << "Controller: Sending SHUTDOWN to all agents...\n";
+
+    ++command_seq_;
+
+    // Use registered command area for RDMA writes
+    uint8_t* cmd_buf = static_cast<uint8_t*>(buffer_.cmd_slot(0));
+
+    bool all_success = true;
+    for (uint32_t agent_id = 0; agent_id < num_agents_; ++agent_id) {
+        if (!agent_metadata_loaded_[agent_id]) {
+            std::cerr << "Controller: Agent " << agent_id << " metadata not loaded, skipping\n";
+            continue;
+        }
+
+        // Get agent's buffer address
+        const auto* slot = buffer_.agent_slot(agent_id);
+        if (!slot) continue;
+
+        uint64_t agent_buf = from_wire64(slot->buffer_base_addr);
+        uint64_t inbox_addr = agent_buf + AGENT_COMMAND_INBOX_OFFSET;
+
+        // Build SHUTDOWN command
+        TestCommand cmd = {};
+        cmd.command_seq = command_seq_;
+        cmd.command_type = CommandType::SHUTDOWN;
+        cmd.to_wire();
+
+        // Copy to registered buffer and send
+        std::memcpy(cmd_buf, &cmd, sizeof(cmd));
+
+        if (!nixl_.write_to_remote(loaded_agent_names_[agent_id],
+                                   cmd_buf, inbox_addr, sizeof(cmd))) {
+            std::cerr << "Controller: Failed to send SHUTDOWN to agent " << agent_id << "\n";
+            all_success = false;
+        } else {
+            std::cout << "Controller: Sent SHUTDOWN to agent " << agent_id << "\n";
+        }
+    }
+
+    return all_success;
 }
 
 bool Controller::wait_for_results(const std::vector<uint32_t>& agent_ids,
@@ -252,7 +362,35 @@ bool Controller::wait_for_results(const std::vector<uint32_t>& agent_ids,
                 break;
             }
         }
-        if (all_complete) return true;
+        if (all_complete) {
+            // Print results received from each agent
+            for (uint32_t id : agent_ids) {
+                const auto* result = buffer_.result_slot(id);
+                if (result) {
+                    uint64_t seq = from_wire64(result->command_seq);
+                    auto status = static_cast<TestStatus>(from_wire32(static_cast<uint32_t>(result->status)));
+                    uint32_t agent_id = from_wire32(result->agent_id);
+                    uint64_t iterations = from_wire64(result->iterations_completed);
+                    uint64_t min_lat = from_wire64(result->min_latency_ns);
+                    uint64_t max_lat = from_wire64(result->max_latency_ns);
+                    uint64_t avg_lat = from_wire64(result->avg_latency_ns);
+                    uint64_t total_bytes = from_wire64(result->total_bytes);
+
+                    std::cout << "Controller: Results received from agent " << id << ":\n"
+                              << "  command_seq=" << seq << "\n"
+                              << "  status=" << static_cast<int>(status)
+                              << " (" << (status == TestStatus::COMPLETE ? "COMPLETE" :
+                                          status == TestStatus::ERROR ? "ERROR" : "OTHER") << ")\n"
+                              << "  agent_id=" << agent_id << "\n"
+                              << "  iterations_completed=" << iterations << "\n"
+                              << "  min_latency_ns=" << min_lat << "\n"
+                              << "  max_latency_ns=" << max_lat << "\n"
+                              << "  avg_latency_ns=" << avg_lat << "\n"
+                              << "  total_bytes=" << total_bytes << "\n";
+                }
+            }
+            return true;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return false;

@@ -45,6 +45,11 @@ public:
     /// @return true if all peers discovered successfully
     bool discover_peers();
 
+    /// Notify controller that peer discovery is complete.
+    /// Controller waits for this from all agents before sending commands.
+    /// @return true on success
+    bool notify_peer_discovery_complete();
+
     /// Write data to a peer agent's buffer.
     /// @param peer_id Target agent ID
     /// @param offset Offset within peer's buffer
@@ -81,7 +86,10 @@ public:
     /// @return true if a command was executed, false if no new command
     bool poll_and_execute_command();
 
-    /// Run command polling loop until shutdown requested.
+    /// Check if controller requested shutdown.
+    bool is_shutdown_requested() const { return shutdown_requested_; }
+
+    /// Run command polling loop until shutdown requested (by signal or controller).
     /// @param shutdown_flag Reference to shutdown flag (set by signal handler)
     void run_command_loop(volatile std::sig_atomic_t& shutdown_flag);
 
@@ -126,6 +134,7 @@ private:
 
     bool initialized_ = false;
     bool rendezvous_complete_ = false;
+    bool shutdown_requested_ = false;  // Set when controller sends SHUTDOWN command
 };
 
 } // namespace nixl_topo

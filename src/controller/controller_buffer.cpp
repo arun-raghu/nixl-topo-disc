@@ -18,13 +18,15 @@ ControllerBuffer::ControllerBuffer(ControllerBuffer&& other) noexcept
       num_agents_(other.num_agents_),
       agent_slots_offset_(other.agent_slots_offset_),
       notification_offset_(other.notification_offset_),
-      result_offset_(other.result_offset_) {
+      result_offset_(other.result_offset_),
+      cmd_area_offset_(other.cmd_area_offset_) {
     other.buffer_ = nullptr;
     other.buffer_size_ = 0;
     other.num_agents_ = 0;
     other.agent_slots_offset_ = 0;
     other.notification_offset_ = 0;
     other.result_offset_ = 0;
+    other.cmd_area_offset_ = 0;
 }
 
 ControllerBuffer& ControllerBuffer::operator=(ControllerBuffer&& other) noexcept {
@@ -36,12 +38,14 @@ ControllerBuffer& ControllerBuffer::operator=(ControllerBuffer&& other) noexcept
         agent_slots_offset_ = other.agent_slots_offset_;
         notification_offset_ = other.notification_offset_;
         result_offset_ = other.result_offset_;
+        cmd_area_offset_ = other.cmd_area_offset_;
         other.buffer_ = nullptr;
         other.buffer_size_ = 0;
         other.num_agents_ = 0;
         other.agent_slots_offset_ = 0;
         other.notification_offset_ = 0;
         other.result_offset_ = 0;
+        other.cmd_area_offset_ = 0;
     }
     return *this;
 }
@@ -60,7 +64,8 @@ bool ControllerBuffer::allocate(uint32_t num_agents) {
     const size_t agent_slots_size = num_agents * AGENT_SLOT_SIZE;
     const size_t notification_size = num_agents * NOTIFICATION_SLOT_SIZE;
     const size_t result_size = num_agents * TEST_RESULT_SIZE;
-    const size_t total_size = header_size + agent_slots_size + notification_size + result_size;
+    const size_t cmd_area_size = CONTROLLER_CMD_AREA_SIZE;
+    const size_t total_size = header_size + agent_slots_size + notification_size + result_size + cmd_area_size;
 
     // Allocate pinned, page-aligned memory (always tries to pin; mlock failure is non-fatal)
     void* buffer = alloc_buffer(total_size, true, false);
@@ -75,6 +80,7 @@ bool ControllerBuffer::allocate(uint32_t num_agents) {
     agent_slots_offset_ = static_cast<uint32_t>(header_size);
     notification_offset_ = static_cast<uint32_t>(header_size + agent_slots_size);
     result_offset_ = static_cast<uint32_t>(header_size + agent_slots_size + notification_size);
+    cmd_area_offset_ = static_cast<uint32_t>(header_size + agent_slots_size + notification_size + result_size);
 
     // Initialize header in wire format (big-endian for cross-platform RDMA)
     auto* hdr = reinterpret_cast<BufferHeader*>(buffer);
@@ -104,6 +110,7 @@ void ControllerBuffer::deallocate() {
         agent_slots_offset_ = 0;
         notification_offset_ = 0;
         result_offset_ = 0;
+        cmd_area_offset_ = 0;
     }
 }
 
@@ -178,6 +185,21 @@ const TestResult* ControllerBuffer::result_slot(uint32_t agent_id) const {
     auto* base = reinterpret_cast<const uint8_t*>(buffer_);
     return reinterpret_cast<const TestResult*>(base + result_offset_ +
                                                 agent_id * TEST_RESULT_SIZE);
+}
+
+void* ControllerBuffer::cmd_slot(uint32_t slot_index) {
+    if (!buffer_) return nullptr;
+
+    // Each slot is 64 bytes (size of TestCommand)
+    constexpr size_t CMD_SLOT_SIZE = 64;
+    size_t offset = slot_index * CMD_SLOT_SIZE;
+
+    if (offset + CMD_SLOT_SIZE > CONTROLLER_CMD_AREA_SIZE) {
+        return nullptr;  // Out of bounds
+    }
+
+    auto* base = reinterpret_cast<uint8_t*>(buffer_);
+    return base + cmd_area_offset_ + offset;
 }
 
 } // namespace nixl_topo

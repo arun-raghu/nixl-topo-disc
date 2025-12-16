@@ -1,5 +1,6 @@
 #include "controller.hpp"
 #include <iostream>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <csignal>
@@ -113,6 +114,10 @@ void signal_handler(int signal) {
 } // anonymous namespace
 
 int main(int argc, char* argv[]) {
+    // Disable stdout/stderr buffering for immediate log output
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
     uint32_t num_agents = 0;
     uint32_t timeout_sec = 60;
     std::string agent_path;
@@ -258,11 +263,85 @@ int main(int argc, char* argv[]) {
     controller.signal_rendezvous_complete();
     std::cout << "Rendezvous complete!\n";
 
-    // Keep running until shutdown
-    std::cout << "\nController running. Press Ctrl+C to shutdown.\n";
-    while (!g_shutdown_requested) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+    // Wait for all agents to complete peer discovery before sending commands
+    if (!controller.wait_for_peer_discovery(std::chrono::seconds(timeout_sec))) {
+        std::cerr << "Error: Timeout waiting for peer discovery\n";
+        terminate_agents();
+        controller.shutdown();
+        return 1;
     }
+
+    // Execute tests
+    // TODO: Later, read test configuration from cmd_config file provided at startup
+    // For now, issue a single ping-pong test between lowest numbered registered agents
+    if (!g_shutdown_requested && num_agents >= 2) {
+        std::cout << "\n=== Executing Tests ===\n";
+
+        // Find two lowest-numbered registered agents
+        uint32_t initiator_id = UINT32_MAX;
+        uint32_t responder_id = UINT32_MAX;
+        for (uint32_t i = 0; i < num_agents && responder_id == UINT32_MAX; ++i) {
+            if (controller.buffer().is_agent_registered(i)) {
+                if (initiator_id == UINT32_MAX) {
+                    initiator_id = i;
+                } else {
+                    responder_id = i;
+                }
+            }
+        }
+
+        if (initiator_id != UINT32_MAX && responder_id != UINT32_MAX) {
+            // Issue ping-pong test with default parameters
+            uint64_t message_size = 64;
+            uint32_t iterations = 100;
+            uint32_t warmup_iterations = 10;
+            auto result_timeout = std::chrono::seconds(30);
+
+            // Test 1: initiator_id -> responder_id
+            std::cout << "\n--- Test 1: initiator=" << initiator_id
+                      << " responder=" << responder_id << " ---\n";
+
+            if (controller.issue_ping_pong_test(initiator_id, responder_id,
+                                                 message_size, iterations, warmup_iterations)) {
+                std::cout << "Waiting for results...\n";
+                if (controller.wait_for_results({initiator_id}, controller.command_seq(), result_timeout)) {
+                    std::cout << "Test 1 completed successfully!\n";
+                } else {
+                    std::cerr << "Error: Timeout waiting for test 1 results\n";
+                }
+            } else {
+                std::cerr << "Error: Failed to issue test 1\n";
+            }
+
+            // Test 2: swap roles - responder_id -> initiator_id
+            std::cout << "\n--- Test 2: initiator=" << responder_id
+                      << " responder=" << initiator_id << " ---\n";
+
+            if (controller.issue_ping_pong_test(responder_id, initiator_id,
+                                                 message_size, iterations, warmup_iterations)) {
+                std::cout << "Waiting for results...\n";
+                if (controller.wait_for_results({responder_id}, controller.command_seq(), result_timeout)) {
+                    std::cout << "Test 2 completed successfully!\n";
+                } else {
+                    std::cerr << "Error: Timeout waiting for test 2 results\n";
+                }
+            } else {
+                std::cerr << "Error: Failed to issue test 2\n";
+            }
+        } else {
+            std::cerr << "Error: Not enough registered agents for ping-pong test\n";
+        }
+
+        std::cout << "\n=== Tests Complete ===\n\n";
+    }
+
+    // Send SHUTDOWN command to all agents
+    std::cout << "Sending shutdown to agents...\n";
+    controller.shutdown_agents();
+
+    // Give agents time to process shutdown and exit gracefully
+    std::cout << "Waiting for agents to exit...\n";
+    std::this_thread::sleep_for(std::chrono::seconds(2));
 
     std::cout << "\nShutting down controller...\n";
     terminate_agents();

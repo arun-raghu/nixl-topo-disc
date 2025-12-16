@@ -7,9 +7,12 @@
 
 namespace nixl_topo {
 
+/// Size of command scratch area (enough for multiple parallel commands)
+constexpr size_t CONTROLLER_CMD_AREA_SIZE = 4096;  // 64 commands @ 64 bytes each
+
 /// Manages the controller's shared buffer for agent registration and coordination.
 /// Layout:
-///   [BufferHeader][AgentSlot 0][AgentSlot 1]...[AgentSlot N-1][Notification 0]...[Notification N-1]
+///   [BufferHeader][AgentSlots][Notifications][Results][CmdArea]
 class ControllerBuffer {
 public:
     ControllerBuffer();
@@ -65,6 +68,10 @@ public:
     TestResult* result_slot(uint32_t agent_id);
     const TestResult* result_slot(uint32_t agent_id) const;
 
+    /// Get pointer to command scratch area (for RDMA writes to agents).
+    /// @param slot_index Index into the command area (0-63 for 64-byte commands)
+    void* cmd_slot(uint32_t slot_index = 0);
+
 private:
     void* buffer_ = nullptr;
     size_t buffer_size_ = 0;
@@ -74,6 +81,7 @@ private:
     uint32_t agent_slots_offset_ = 0;
     uint32_t notification_offset_ = 0;
     uint32_t result_offset_ = 0;
+    uint32_t cmd_area_offset_ = 0;
 };
 
 } // namespace nixl_topo

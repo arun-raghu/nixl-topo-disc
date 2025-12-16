@@ -310,6 +310,22 @@ bool Agent::discover_peers() {
     return all_connected;
 }
 
+bool Agent::notify_peer_discovery_complete() {
+    if (!rendezvous_complete_) {
+        std::cerr << "Agent::notify_peer_discovery_complete: rendezvous not complete\n";
+        return false;
+    }
+
+    std::cout << "Agent " << agent_id_ << ": Notifying controller of peer discovery complete\n";
+
+    if (!nixl_.send_notification(controller_name_, NOTIF_PEER_DISCOVERY_COMPLETE)) {
+        std::cerr << "Agent " << agent_id_ << ": Failed to send peer discovery notification\n";
+        return false;
+    }
+
+    return true;
+}
+
 bool Agent::write_to_peer(uint32_t peer_id, size_t offset, const void* data, size_t size) {
     if (peer_id >= peers_.size() || !peers_[peer_id].connected) {
         std::cerr << "Agent::write_to_peer: peer " << peer_id << " not connected\n";
@@ -451,13 +467,35 @@ bool Agent::poll_and_execute_command() {
         return false;  // No new command
     }
 
-    std::cout << "Agent " << agent_id_ << ": Received command seq=" << cmd.command_seq
-              << " type=" << static_cast<int>(cmd.command_type)
-              << " role=" << static_cast<int>(cmd.role) << "\n";
+    auto cmd_type_str = [](CommandType t) {
+        switch (t) {
+            case CommandType::NONE: return "NONE";
+            case CommandType::SHUTDOWN: return "SHUTDOWN";
+            case CommandType::PING_PONG_LATENCY: return "PING_PONG_LATENCY";
+            default: return "UNKNOWN";
+        }
+    };
+
+    std::cout << "Agent " << agent_id_ << ": Received command:\n"
+              << "  seq=" << cmd.command_seq << "\n"
+              << "  type=" << static_cast<int>(cmd.command_type)
+              << " (" << cmd_type_str(cmd.command_type) << ")\n"
+              << "  role=" << static_cast<int>(cmd.role)
+              << " (" << (cmd.role == TestRole::INITIATOR ? "INITIATOR" : "RESPONDER") << ")\n"
+              << "  peer_agent_id=" << cmd.peer_agent_id << "\n"
+              << "  message_size=" << cmd.message_size << "\n"
+              << "  iterations=" << cmd.iterations << "\n"
+              << "  warmup_iterations=" << cmd.warmup_iterations << "\n";
 
     last_command_seq_ = cmd.command_seq;
 
     // Execute based on command type
+    if (cmd.command_type == CommandType::SHUTDOWN) {
+        std::cout << "Agent " << agent_id_ << ": Received SHUTDOWN command\n";
+        shutdown_requested_ = true;
+        return true;
+    }
+
     if (cmd.command_type == CommandType::PING_PONG_LATENCY) {
         TestResult result = execute_ping_pong(cmd);
 
@@ -477,8 +515,50 @@ TestResult Agent::execute_ping_pong(const TestCommand& cmd) {
     result.agent_id = agent_id_;
     result.status = TestStatus::RUNNING;
 
+    std::cout << "Agent " << agent_id_ << ": [STUB] Starting ping-pong test"
+              << " role=" << (cmd.role == TestRole::INITIATOR ? "INITIATOR" : "RESPONDER")
+              << " peer=" << cmd.peer_agent_id << "\n";
+
+    // Stub: sleep for 1 second instead of actual ping-pong
+    std::cout << "Agent " << agent_id_ << ": [STUB] Sleeping for 1 second...\n";
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    if (cmd.role == TestRole::INITIATOR) {
+        // Initiator: populate dummy results
+        result.status = TestStatus::COMPLETE;
+        result.iterations_completed = cmd.iterations;
+        result.total_bytes = cmd.message_size * cmd.iterations * 2;
+        result.min_latency_ns = 1000;   // Dummy: 1 microsecond
+        result.max_latency_ns = 5000;   // Dummy: 5 microseconds
+        result.avg_latency_ns = 2500;   // Dummy: 2.5 microseconds
+        result.error_code = 0;
+
+        std::cout << "Agent " << agent_id_ << ": [STUB] INITIATOR done, sending dummy results:\n"
+                  << "  iterations_completed=" << result.iterations_completed << "\n"
+                  << "  min_latency_ns=" << result.min_latency_ns << "\n"
+                  << "  max_latency_ns=" << result.max_latency_ns << "\n"
+                  << "  avg_latency_ns=" << result.avg_latency_ns << "\n";
+    } else {
+        // Responder: just mark complete
+        result.status = TestStatus::COMPLETE;
+        result.iterations_completed = cmd.warmup_iterations + cmd.iterations;
+
+        std::cout << "Agent " << agent_id_ << ": [STUB] RESPONDER I'm done\n";
+    }
+
+    return result;
+}
+
+#if 0
+// Original ping-pong implementation (real RDMA transfers)
+TestResult Agent::execute_ping_pong_real(const TestCommand& cmd) {
+    TestResult result = {};
+    result.command_seq = cmd.command_seq;
+    result.agent_id = agent_id_;
+    result.status = TestStatus::RUNNING;
+
     uint32_t total_iterations = cmd.warmup_iterations + cmd.iterations;
-    uint64_t peer_mailbox_addr = cmd.peer_buffer_addr + AGENT_MAILBOX_OFFSET;
+    uint64_t peer_mailbox_addr = peers_[cmd.peer_agent_id].buffer_addr + AGENT_MAILBOX_OFFSET;
 
     // Our mailbox for receiving
     uint8_t* my_mailbox = static_cast<uint8_t*>(test_buffer_) + AGENT_MAILBOX_OFFSET;
@@ -584,6 +664,7 @@ TestResult Agent::execute_ping_pong(const TestCommand& cmd) {
 
     return result;
 }
+#endif
 
 bool Agent::report_result(const TestResult& result) {
     // Compute result slot address in controller buffer
@@ -611,16 +692,24 @@ bool Agent::report_result(const TestResult& result) {
 void Agent::run_command_loop(volatile std::sig_atomic_t& shutdown_flag) {
     std::cout << "Agent " << agent_id_ << ": Entering command loop\n";
 
-    while (!shutdown_flag) {
+    while (!shutdown_flag && !shutdown_requested_) {
         if (poll_and_execute_command()) {
-            // Command executed, check again immediately
+            // Command executed, check for shutdown
+            if (shutdown_requested_) {
+                break;
+            }
+            // Check again immediately for more commands
             continue;
         }
         // No command, sleep briefly
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
-    std::cout << "Agent " << agent_id_ << ": Exiting command loop\n";
+    if (shutdown_requested_) {
+        std::cout << "Agent " << agent_id_ << ": Exiting command loop (controller shutdown)\n";
+    } else {
+        std::cout << "Agent " << agent_id_ << ": Exiting command loop (signal)\n";
+    }
 }
 
 } // namespace nixl_topo
