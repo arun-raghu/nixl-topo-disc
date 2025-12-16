@@ -515,48 +515,6 @@ TestResult Agent::execute_ping_pong(const TestCommand& cmd) {
     result.agent_id = agent_id_;
     result.status = TestStatus::RUNNING;
 
-    std::cout << "Agent " << agent_id_ << ": [STUB] Starting ping-pong test"
-              << " role=" << (cmd.role == TestRole::INITIATOR ? "INITIATOR" : "RESPONDER")
-              << " peer=" << cmd.peer_agent_id << "\n";
-
-    // Stub: sleep for 1 second instead of actual ping-pong
-    std::cout << "Agent " << agent_id_ << ": [STUB] Sleeping for 1 second...\n";
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-
-    if (cmd.role == TestRole::INITIATOR) {
-        // Initiator: populate dummy results
-        result.status = TestStatus::COMPLETE;
-        result.iterations_completed = cmd.iterations;
-        result.total_bytes = cmd.message_size * cmd.iterations * 2;
-        result.min_latency_ns = 1000;   // Dummy: 1 microsecond
-        result.max_latency_ns = 5000;   // Dummy: 5 microseconds
-        result.avg_latency_ns = 2500;   // Dummy: 2.5 microseconds
-        result.error_code = 0;
-
-        std::cout << "Agent " << agent_id_ << ": [STUB] INITIATOR done, sending dummy results:\n"
-                  << "  iterations_completed=" << result.iterations_completed << "\n"
-                  << "  min_latency_ns=" << result.min_latency_ns << "\n"
-                  << "  max_latency_ns=" << result.max_latency_ns << "\n"
-                  << "  avg_latency_ns=" << result.avg_latency_ns << "\n";
-    } else {
-        // Responder: just mark complete
-        result.status = TestStatus::COMPLETE;
-        result.iterations_completed = cmd.warmup_iterations + cmd.iterations;
-
-        std::cout << "Agent " << agent_id_ << ": [STUB] RESPONDER I'm done\n";
-    }
-
-    return result;
-}
-
-#if 0
-// Original ping-pong implementation (real RDMA transfers)
-TestResult Agent::execute_ping_pong_real(const TestCommand& cmd) {
-    TestResult result = {};
-    result.command_seq = cmd.command_seq;
-    result.agent_id = agent_id_;
-    result.status = TestStatus::RUNNING;
-
     uint32_t total_iterations = cmd.warmup_iterations + cmd.iterations;
     uint64_t peer_mailbox_addr = peers_[cmd.peer_agent_id].buffer_addr + AGENT_MAILBOX_OFFSET;
 
@@ -572,13 +530,19 @@ TestResult Agent::execute_ping_pong_real(const TestCommand& cmd) {
     size_t total_msg_size = sizeof(MailboxHeader) + cmd.message_size;
     std::memset(send_buf, 0, total_msg_size);
 
+    // Reset mailbox sequence for this test (so we don't see stale sequences from previous tests)
+    my_header->sequence = 0;
+
     // Latency tracking (for initiator)
     std::vector<uint64_t> latencies;
     if (cmd.role == TestRole::INITIATOR) {
         latencies.reserve(cmd.iterations);
     }
 
-    uint64_t my_last_seen_seq = my_header->sequence;  // Track what we've seen
+    uint64_t my_last_seen_seq = 0;  // Start fresh for this test
+
+    // Timeout for waiting on peer response (5 seconds)
+    constexpr auto POLL_TIMEOUT = std::chrono::seconds(5);
 
     std::cout << "Agent " << agent_id_ << ": Starting ping-pong test"
               << " role=" << (cmd.role == TestRole::INITIATOR ? "INITIATOR" : "RESPONDER")
@@ -607,9 +571,16 @@ TestResult Agent::execute_ping_pong_real(const TestCommand& cmd) {
                 return result;
             }
 
-            // Poll for pong in our mailbox
+            // Poll for pong in our mailbox (with timeout)
+            auto poll_start = std::chrono::steady_clock::now();
             while (my_header->sequence <= my_last_seen_seq) {
-                // Busy-poll
+                if (std::chrono::steady_clock::now() - poll_start > POLL_TIMEOUT) {
+                    result.status = TestStatus::ERROR;
+                    result.error_code = 2;  // Timeout waiting for pong
+                    std::cerr << "Agent " << agent_id_ << ": Timeout waiting for pong at iteration " << i
+                              << " (expected seq > " << my_last_seen_seq << ", got " << my_header->sequence << ")\n";
+                    return result;
+                }
             }
             my_last_seen_seq = my_header->sequence;
 
@@ -642,9 +613,16 @@ TestResult Agent::execute_ping_pong_real(const TestCommand& cmd) {
     } else {
         // RESPONDER: wait for ping, send pong
         for (uint32_t i = 0; i < total_iterations; ++i) {
-            // Poll for ping in our mailbox
+            // Poll for ping in our mailbox (with timeout)
+            auto poll_start = std::chrono::steady_clock::now();
             while (my_header->sequence <= my_last_seen_seq) {
-                // Busy-poll
+                if (std::chrono::steady_clock::now() - poll_start > POLL_TIMEOUT) {
+                    result.status = TestStatus::ERROR;
+                    result.error_code = 3;  // Timeout waiting for ping
+                    std::cerr << "Agent " << agent_id_ << ": Timeout waiting for ping at iteration " << i
+                              << " (expected seq > " << my_last_seen_seq << ", got " << my_header->sequence << ")\n";
+                    return result;
+                }
             }
             my_last_seen_seq = my_header->sequence;
 
@@ -664,7 +642,6 @@ TestResult Agent::execute_ping_pong_real(const TestCommand& cmd) {
 
     return result;
 }
-#endif
 
 bool Agent::report_result(const TestResult& result) {
     // Compute result slot address in controller buffer
