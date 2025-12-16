@@ -23,20 +23,20 @@ BufferHeaderTest.FromWire_ConvertAllFields   | Verify from_wire() converts all h
 BufferHeaderTest.ToWire_FromWire_RoundTrip   | Verify header round-trip preserves all field values
 BufferHeaderTest.Size_IsExpected             | Verify BufferHeader size is within expected bounds (40-64 bytes)
 
-AgentSlotTest.ToWire_ConvertHeaderFields     | Verify to_wire() converts slot header fields to big-endian
-AgentSlotTest.FromWire_ConvertHeaderFields   | Verify from_wire() converts slot header fields from big-endian
-AgentSlotTest.ToWire_FromWire_RoundTrip      | Verify slot round-trip preserves field values
-AgentSlotTest.MetadataPointer_ReturnsCorrectOffset | Verify metadata() returns pointer at AGENT_SLOT_HEADER_SIZE offset
+AgentSlotTest.ToWire_ConvertHeaderFields     | Verify to_wire() converts slot header fields (incl. buffer_base_addr) to big-endian
+AgentSlotTest.FromWire_ConvertHeaderFields   | Verify from_wire() converts slot header fields (incl. buffer_base_addr) from big-endian
+AgentSlotTest.ToWire_FromWire_RoundTrip      | Verify slot round-trip preserves all field values including buffer_base_addr
+AgentSlotTest.MetadataPointer_ReturnsCorrectOffset | Verify metadata() returns pointer at AGENT_SLOT_HEADER_SIZE (24) offset
 AgentSlotTest.MetadataPointer_NonConst       | Verify non-const metadata() returns correct offset
-AgentSlotTest.HeaderSize_IsCorrect           | Verify AGENT_SLOT_HEADER_SIZE is 16 bytes
-AgentSlotTest.SlotSize_AccommodatesMetadata  | Verify AGENT_SLOT_SIZE fits header + MAX_METADATA_BLOB_SIZE
+AgentSlotTest.HeaderSize_IsCorrect           | Verify AGENT_SLOT_HEADER_SIZE is 24 bytes (populated_flag+buffer_base_addr+metadata_size+reserved)
+AgentSlotTest.SlotSize_AccommodatesMetadata  | Verify AGENT_SLOT_SIZE fits header + MAX_METADATA_BLOB_SIZE (4072)
 
 NotificationTest.DefaultConstruction         | Verify Notification default-constructs with zeroed fields
 NotificationTest.Size_MatchesSlotSize        | Verify sizeof(Notification) equals NOTIFICATION_SLOT_SIZE
 NotificationTest.NotificationType_Values     | Verify NotificationType enum values (NONE=0, RENDEZVOUS_COMPLETE=1)
 NotificationTest.CanSetFields                | Verify all Notification fields can be set and read back
 
-ConstantsTest.BufferSizes_AreReasonable      | Verify DEFAULT_TEST_BUFFER_SIZE (256MB) and MAX_METADATA_BLOB_SIZE
+ConstantsTest.BufferSizes_AreReasonable      | Verify DEFAULT_TEST_BUFFER_SIZE (256MB) and MAX_METADATA_BLOB_SIZE (4072)
 ConstantsTest.SlotSizes_AreReasonable        | Verify AGENT_SLOT_SIZE and NOTIFICATION_SLOT_SIZE are positive
 ConstantsTest.NotificationMessages_AreDefined | Verify NOTIF_AGENT_REGISTERED and NOTIF_RENDEZVOUS_COMPLETE strings
 
