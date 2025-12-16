@@ -1,0 +1,183 @@
+# Unit Test Descriptions
+# Keep this file updated when tests are added/modified.
+
+================================================================================
+test_types.cpp - Wire Format and Data Structure Tests
+================================================================================
+
+Test Name                                    | Purpose
+---------------------------------------------|------------------------------------------
+WireFormatTest.ToWire32_ConvertsToBigEndian  | Verify 32-bit host-to-wire conversion produces big-endian bytes
+WireFormatTest.FromWire32_ConvertsFromBigEndian | Verify 32-bit wire-to-host conversion from big-endian
+WireFormatTest.ToWire32_FromWire32_RoundTrip | Verify 32-bit conversion round-trip preserves value
+WireFormatTest.ToWire64_ConvertsToBigEndian  | Verify 64-bit host-to-wire conversion produces big-endian bytes
+WireFormatTest.FromWire64_ConvertsFromBigEndian | Verify 64-bit wire-to-host conversion from big-endian
+WireFormatTest.ToWire64_FromWire64_RoundTrip | Verify 64-bit conversion round-trip preserves value
+WireFormatTest.WireFormat_ZeroValues         | Verify zero values convert correctly
+WireFormatTest.WireFormat_MaxValues          | Verify max values (UINT32_MAX, UINT64_MAX) convert correctly
+
+BufferHeaderTest.MagicConstant_IsCorrect     | Verify MAGIC constant is 0x4E49584C ("NIXL")
+BufferHeaderTest.VersionConstant_IsCorrect   | Verify VERSION constant is 1
+BufferHeaderTest.ToWire_ConvertAllFields     | Verify to_wire() converts all header fields to big-endian
+BufferHeaderTest.FromWire_ConvertAllFields   | Verify from_wire() converts all header fields from big-endian
+BufferHeaderTest.ToWire_FromWire_RoundTrip   | Verify header round-trip preserves all field values
+BufferHeaderTest.Size_IsExpected             | Verify BufferHeader size is within expected bounds (40-64 bytes)
+
+AgentSlotTest.ToWire_ConvertHeaderFields     | Verify to_wire() converts slot header fields to big-endian
+AgentSlotTest.FromWire_ConvertHeaderFields   | Verify from_wire() converts slot header fields from big-endian
+AgentSlotTest.ToWire_FromWire_RoundTrip      | Verify slot round-trip preserves field values
+AgentSlotTest.MetadataPointer_ReturnsCorrectOffset | Verify metadata() returns pointer at AGENT_SLOT_HEADER_SIZE offset
+AgentSlotTest.MetadataPointer_NonConst       | Verify non-const metadata() returns correct offset
+AgentSlotTest.HeaderSize_IsCorrect           | Verify AGENT_SLOT_HEADER_SIZE is 16 bytes
+AgentSlotTest.SlotSize_AccommodatesMetadata  | Verify AGENT_SLOT_SIZE fits header + MAX_METADATA_BLOB_SIZE
+
+NotificationTest.DefaultConstruction         | Verify Notification default-constructs with zeroed fields
+NotificationTest.Size_MatchesSlotSize        | Verify sizeof(Notification) equals NOTIFICATION_SLOT_SIZE
+NotificationTest.NotificationType_Values     | Verify NotificationType enum values (NONE=0, RENDEZVOUS_COMPLETE=1)
+NotificationTest.CanSetFields                | Verify all Notification fields can be set and read back
+
+ConstantsTest.BufferSizes_AreReasonable      | Verify DEFAULT_TEST_BUFFER_SIZE (256MB) and MAX_METADATA_BLOB_SIZE
+ConstantsTest.SlotSizes_AreReasonable        | Verify AGENT_SLOT_SIZE and NOTIFICATION_SLOT_SIZE are positive
+ConstantsTest.NotificationMessages_AreDefined | Verify NOTIF_AGENT_REGISTERED and NOTIF_RENDEZVOUS_COMPLETE strings
+
+================================================================================
+test_memory.cpp - Memory Allocation Tests
+================================================================================
+
+Test Name                                    | Purpose
+---------------------------------------------|------------------------------------------
+MemoryTest.AllocBuffer_ReturnsNonNull        | Verify alloc_buffer() returns non-null pointer
+MemoryTest.AllocBuffer_ReturnsPageAligned    | Verify returned pointer is page-aligned (4096 bytes)
+MemoryTest.AllocBuffer_LargerThanPage_StillAligned | Verify alignment for multi-page allocations
+MemoryTest.AllocBuffer_SmallSize_StillAligned | Verify alignment for sub-page allocations
+MemoryTest.AllocBuffer_CanWriteAndRead       | Verify allocated memory is writable and readable
+MemoryTest.AllocBuffer_WithPinning_ReturnsNonNull | Verify allocation succeeds with pin_memory=true
+MemoryTest.AllocBuffer_WithPinning_StillPageAligned | Verify pinned allocation is page-aligned
+MemoryTest.AllocBuffer_LargeAllocation       | Verify 1MB allocation works correctly
+MemoryTest.AllocBuffer_MultipleAllocations   | Verify multiple allocations return distinct, aligned pointers
+MemoryTest.FreeBuffer_NullPointer_NoOp       | Verify free_buffer(nullptr) doesn't crash
+MemoryTest.FreeBuffer_ZeroSize_NoOp          | Verify free_buffer with zero size works
+MemoryTest.FreeBuffer_AfterPinnedAlloc       | Verify freeing pinned memory works correctly
+MemoryTest.PageSize_IsReasonable             | Verify PAGE_SIZE constant is 4096
+MemoryTest.AllocFree_Repeated                | Stress test: allocate/free 100 times
+MemoryTest.AllocFree_VaryingSizes            | Verify allocation works for various sizes (64-65536 bytes)
+MemoryTest.AllocBuffer_ExactPageSize         | Verify allocation at exact page boundary
+MemoryTest.AllocBuffer_OneByteOverPage       | Verify allocation just over page size
+MemoryTest.AllocBuffer_OneByteLessPage       | Verify allocation just under page size
+
+================================================================================
+test_controller_buffer.cpp - Controller Buffer Management Tests
+================================================================================
+
+Test Name                                    | Purpose
+---------------------------------------------|------------------------------------------
+ControllerBufferTest.DefaultConstruction_NotAllocated | Verify default-constructed buffer is not allocated
+ControllerBufferTest.Allocate_Success        | Verify allocate() succeeds and sets state correctly
+ControllerBufferTest.Allocate_ZeroAgents_Fails | Verify allocate(0) returns false
+ControllerBufferTest.Allocate_DoubleAllocation_Fails | Verify second allocate() call fails
+ControllerBufferTest.Allocate_PageAligned    | Verify allocated buffer is page-aligned
+ControllerBufferTest.Deallocate_ClearsState  | Verify deallocate() resets all state
+ControllerBufferTest.Deallocate_Idempotent   | Verify multiple deallocate() calls are safe
+ControllerBufferTest.Destructor_Deallocates  | Verify destructor cleans up memory
+
+ControllerBufferTest.Header_NotNull          | Verify header() returns non-null after allocation
+ControllerBufferTest.Header_ConstNotNull     | Verify const header() returns non-null
+ControllerBufferTest.Header_NullWhenNotAllocated | Verify header() returns null before allocation
+ControllerBufferTest.Header_MagicInWireFormat | Verify header magic is stored in wire format
+ControllerBufferTest.Header_VersionInWireFormat | Verify header version is stored in wire format
+ControllerBufferTest.Header_NumAgentsInWireFormat | Verify num_agents is stored in wire format
+ControllerBufferTest.Header_OffsetsInWireFormat | Verify slot offsets are positive and ordered
+ControllerBufferTest.Header_BufferBaseAddr   | Verify buffer_base_addr matches actual buffer address
+ControllerBufferTest.Header_ReadyFlagInitiallyZero | Verify ready_flag is initialized to 0
+
+ControllerBufferTest.AgentSlot_ValidIndex    | Verify agent_slot() returns non-null for valid indices
+ControllerBufferTest.AgentSlot_ConstValidIndex | Verify const agent_slot() works correctly
+ControllerBufferTest.AgentSlot_InvalidIndex  | Verify agent_slot() returns null for out-of-bounds
+ControllerBufferTest.AgentSlot_NullWhenNotAllocated | Verify agent_slot() returns null before allocation
+ControllerBufferTest.AgentSlot_DistinctAddresses | Verify each slot has unique address
+ControllerBufferTest.AgentSlot_ProperSpacing | Verify slots are spaced AGENT_SLOT_SIZE apart
+ControllerBufferTest.AgentSlot_InitiallyNotPopulated | Verify slots start with populated_flag=0
+
+ControllerBufferTest.NotificationSlot_ValidIndex | Verify notification_slot() returns non-null for valid indices
+ControllerBufferTest.NotificationSlot_InvalidIndex | Verify notification_slot() returns null for out-of-bounds
+ControllerBufferTest.NotificationSlot_NullWhenNotAllocated | Verify notification_slot() returns null before allocation
+ControllerBufferTest.NotificationSlot_ProperSpacing | Verify notification slots are spaced correctly
+
+ControllerBufferTest.IsAgentRegistered_InitiallyFalse | Verify all agents start as unregistered
+ControllerBufferTest.IsAgentRegistered_AfterPopulation | Verify is_agent_registered() returns true after flag set
+ControllerBufferTest.IsAgentRegistered_InvalidIndex_ReturnsFalse | Verify invalid index returns false
+ControllerBufferTest.IsAgentRegistered_NotAllocated_ReturnsFalse | Verify returns false before allocation
+
+ControllerBufferTest.SetReadyFlag_SetsWireFormat | Verify set_ready_flag() sets flag in wire format
+ControllerBufferTest.SetReadyFlag_Idempotent | Verify multiple set_ready_flag() calls are safe
+ControllerBufferTest.SetReadyFlag_NotAllocated_NoOp | Verify set_ready_flag() is no-op before allocation
+
+ControllerBufferTest.MoveConstruction        | Verify move constructor transfers ownership
+ControllerBufferTest.MoveAssignment          | Verify move assignment transfers ownership
+ControllerBufferTest.MoveAssignment_DeallocatesExisting | Verify move assignment deallocates existing buffer
+ControllerBufferTest.SelfMoveAssignment_NoOp | Verify self-move-assignment doesn't corrupt state
+
+ControllerBufferTest.BufferLayout_HeaderFirst | Verify header is at buffer start
+ControllerBufferTest.BufferLayout_AgentSlotsAfterHeader | Verify agent slots follow header
+ControllerBufferTest.BufferLayout_NotificationsAfterSlots | Verify notification slots follow agent slots
+ControllerBufferTest.BufferSize_MatchesExpected | Verify total size matches header + slots + notifications
+
+ControllerBufferTest.Allocate_SingleAgent    | Verify allocation works with 1 agent
+ControllerBufferTest.Allocate_ManyAgents     | Verify allocation works with 100 agents
+
+================================================================================
+test_topology.cpp - Topology Discovery and Graph Construction Tests
+================================================================================
+
+Test Name                                    | Purpose
+---------------------------------------------|------------------------------------------
+# LatencyMatrix Tests
+TopologyTest.LatencyMatrix_LoadFromCSV_Small4Node | Load 4-node CSV, verify node count and known values
+TopologyTest.LatencyMatrix_LoadFromCSV_Medium8Node | Load 8-node CSV, verify node count
+TopologyTest.LatencyMatrix_LoadFromCSV_InvalidFile | Verify exception thrown for nonexistent file
+TopologyTest.LatencyMatrix_Distance_Symmetric | Verify distance(i,j) == distance(j,i)
+TopologyTest.LatencyMatrix_Symmetrize        | Verify symmetrize() makes matrix symmetric
+TopologyTest.LatencyMatrix_SingleNode        | Verify single-node matrix loads correctly
+TopologyTest.LatencyMatrix_TwoNodes          | Verify two-node matrix loads correctly
+
+# Dendrogram Tests
+TopologyTest.Dendrogram_Build_CorrectNodeCount | Verify dendrogram has 2n-1 nodes (n leaves + n-1 internal)
+TopologyTest.Dendrogram_Build_LeavesAreCorrect | Verify first n nodes are leaves with single member
+TopologyTest.Dendrogram_Build_InternalNodesHaveChildren | Verify internal nodes have valid child pointers
+TopologyTest.Dendrogram_Build_RootContainsAllNodes | Verify root node contains all original nodes
+TopologyTest.Dendrogram_Build_MergeDistancesAreMonotonic | Verify merge distances are non-decreasing
+TopologyTest.Dendrogram_CutAtThreshold_AllSeparate | Cut at 0 yields n clusters (one per node)
+TopologyTest.Dendrogram_CutAtThreshold_AllMerged | Cut at high threshold yields 1 cluster
+TopologyTest.Dendrogram_CutAtThreshold_IntermediateCut | Cut at 5000ns yields 2 clusters of 2 nodes each
+TopologyTest.Dendrogram_SingleNode           | Verify dendrogram builds correctly for single node
+TopologyTest.Dendrogram_TwoNodes             | Verify dendrogram builds correctly for two nodes
+
+# TopologyBuilder Tests
+TopologyTest.TopologyBuilder_Build_ProducesValidGraph | Verify build produces graph with physical/hidden nodes and edges
+TopologyTest.TopologyBuilder_Build_TierAssignment | Verify all physical nodes have tier <= 3
+TopologyTest.TopologyBuilder_Build_ClusterMembership | Verify nodes are grouped into clusters
+TopologyTest.TopologyBuilder_BuildFromCSV    | Verify build_from_csv convenience method works
+TopologyTest.TopologyBuilder_CustomConfig    | Verify custom tier thresholds are applied
+
+# Inter-Cluster Connectivity Tests
+TopologyTest.InterCluster_HiddenNodesAtMultipleTiers | Verify hidden nodes created at tier 1 and tier 2
+TopologyTest.InterCluster_HiddenNodesConnected | Verify hidden-to-hidden edges exist (2 for 4-node)
+TopologyTest.InterCluster_PhysicalToHiddenEdges | Verify each physical node connects to one hidden node
+TopologyTest.InterCluster_TotalEdgeCount     | Verify total edge count (6 for 4-node graph)
+TopologyTest.InterCluster_HiddenNodeTypes    | Verify tier 1 is NVSWITCH, tier 2 is TOR_SWITCH
+TopologyTest.InterCluster_8NodeHierarchy     | Verify 8-node graph has 3 hidden nodes and 10 edges
+TopologyTest.InterCluster_VerifyParentChildRelationship | Verify both tier-1 nodes connect to tier-2 node
+TopologyTest.InterCluster_NoSelfLoops        | Verify no edge connects a node to itself
+TopologyTest.InterCluster_SingleClusterNoHigherTier | Verify identical latencies form single cluster
+TopologyTest.InterCluster_Tier3_SpineSwitch  | Verify 3-level hierarchy creates SPINE_SWITCH at tier 3
+TopologyTest.InterCluster_MoreThan3Thresholds_UnknownBottleneck | Verify tier 4+ uses UNKNOWN_BOTTLENECK type
+TopologyTest.InterCluster_ArbitraryThresholdCount | Verify code handles 1, 5, and 10 thresholds
+
+# TopologyGraph Output Tests
+TopologyTest.TopologyGraph_ToAdjacencyList_ValidFormat | Verify adjacency list contains header, nodes, tier info
+TopologyTest.TopologyGraph_ToDot_ValidFormat | Verify DOT output has digraph structure
+TopologyTest.TopologyGraph_ToJson_ValidFormat | Verify JSON output has physical_nodes, hidden_nodes, edges
+
+# End-to-End Integration Tests
+TopologyTest.EndToEnd_CSVToAdjacencyList     | Full pipeline: CSV -> Matrix -> Dendrogram -> Graph -> Output
+TopologyTest.EndToEnd_Medium8Node            | Full pipeline with 8-node dataset

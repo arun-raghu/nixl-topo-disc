@@ -39,6 +39,64 @@ target_link_libraries(test_placeholder PRIVATE
 gtest_discover_tests(test_placeholder)
 
 # =============================================================================
+# Types Tests (wire format, BufferHeader, AgentSlot, Notification)
+# =============================================================================
+
+add_executable(test_types
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_types.cpp
+)
+
+target_include_directories(test_types PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_types PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_types)
+
+# =============================================================================
+# Memory Tests (alloc_buffer, free_buffer)
+# =============================================================================
+
+add_executable(test_memory
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_memory.cpp
+)
+
+target_include_directories(test_memory PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_memory PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_memory)
+
+# =============================================================================
+# Controller Buffer Tests
+# =============================================================================
+
+add_executable(test_controller_buffer
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_controller_buffer.cpp
+    ${CMAKE_SOURCE_DIR}/src/controller/controller_buffer.cpp
+)
+
+target_include_directories(test_controller_buffer PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_controller_buffer PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_controller_buffer)
+
+# =============================================================================
 # Topology Tests
 # =============================================================================
 
