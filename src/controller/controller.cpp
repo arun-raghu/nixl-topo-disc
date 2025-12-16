@@ -4,6 +4,13 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <iomanip>
+#include <fstream>
+#include <stdexcept>
+
+#ifdef HAVE_JSON
+#include <nlohmann/json.hpp>
+#endif
 
 namespace nixl_topo {
 
@@ -450,6 +457,115 @@ bool Controller::load_agent_metadata(uint32_t agent_id) {
     loaded_agent_names_[agent_id] = agent_name;
     agent_metadata_loaded_[agent_id] = true;
     return true;
+}
+
+void Controller::store_test_result(uint32_t initiator_id, uint32_t responder_id,
+                                    const TestResult& result) {
+    LatencyResult lr;
+    lr.initiator_id = initiator_id;
+    lr.responder_id = responder_id;
+    lr.avg_latency_ns = from_wire64(result.avg_latency_ns);
+    lr.min_latency_ns = from_wire64(result.min_latency_ns);
+    lr.max_latency_ns = from_wire64(result.max_latency_ns);
+
+    auto status = static_cast<TestStatus>(from_wire32(static_cast<uint32_t>(result.status)));
+    lr.success = (status == TestStatus::COMPLETE);
+
+    latency_results_.push_back(lr);
+}
+
+void Controller::log_latency_matrix_csv(std::ostream& output) const {
+    // Build NxN symmetric matrix from stored results
+    // Since ping-pong measures RTT, matrix[i][j] = matrix[j][i]
+    std::vector<std::vector<int64_t>> matrix(num_agents_,
+                                              std::vector<int64_t>(num_agents_, 0));
+
+    // Fill in measured values and mirror to make symmetric
+    for (const auto& lr : latency_results_) {
+        if (lr.success && lr.initiator_id < num_agents_ && lr.responder_id < num_agents_) {
+            int64_t latency = static_cast<int64_t>(lr.avg_latency_ns);
+            matrix[lr.initiator_id][lr.responder_id] = latency;
+            matrix[lr.responder_id][lr.initiator_id] = latency;  // Mirror for symmetry
+        }
+    }
+
+    // Output CSV format
+    output << "# Latency matrix (nanoseconds) - symmetric\n";
+    output << "# Row i, Column j = RTT latency between node i and node j\n";
+    for (uint32_t i = 0; i < num_agents_; ++i) {
+        for (uint32_t j = 0; j < num_agents_; ++j) {
+            if (j > 0) output << ",";
+            output << matrix[i][j];
+        }
+        output << "\n";
+    }
+}
+
+// =============================================================================
+// TestConfig implementation
+// =============================================================================
+
+TestConfig TestConfig::from_json(const std::string& filepath) {
+    TestConfig config;
+
+#ifdef HAVE_JSON
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        throw std::runtime_error("Cannot open config file: " + filepath);
+    }
+
+    nlohmann::json j;
+    try {
+        file >> j;
+    } catch (const nlohmann::json::parse_error& e) {
+        throw std::runtime_error("JSON parse error in " + filepath + ": " + e.what());
+    }
+
+    // Parse ping-pong test parameters
+    if (j.contains("ping_pong")) {
+        auto& pp = j["ping_pong"];
+        if (pp.contains("message_size")) {
+            config.message_size = pp["message_size"].get<uint64_t>();
+        }
+        if (pp.contains("iterations")) {
+            config.iterations = pp["iterations"].get<uint32_t>();
+        }
+        if (pp.contains("warmup_iterations")) {
+            config.warmup_iterations = pp["warmup_iterations"].get<uint32_t>();
+        }
+        if (pp.contains("result_timeout_sec")) {
+            config.result_timeout_sec = pp["result_timeout_sec"].get<uint32_t>();
+        }
+    }
+
+    // Parse output configuration
+    if (j.contains("output")) {
+        auto& out = j["output"];
+        if (out.contains("csv_path")) {
+            config.output_csv_path = out["csv_path"].get<std::string>();
+        }
+    }
+
+    // Parse test selection
+    if (j.contains("test_all_pairs")) {
+        config.test_all_pairs = j["test_all_pairs"].get<bool>();
+    }
+
+#else
+    throw std::runtime_error("JSON support not enabled. Rebuild with -DWITH_JSON=ON");
+#endif
+
+    return config;
+}
+
+void TestConfig::print() const {
+    std::cout << "Test Configuration:\n"
+              << "  message_size:       " << message_size << " bytes\n"
+              << "  iterations:         " << iterations << "\n"
+              << "  warmup_iterations:  " << warmup_iterations << "\n"
+              << "  result_timeout_sec: " << result_timeout_sec << "\n"
+              << "  output_csv_path:    " << output_csv_path << "\n"
+              << "  test_all_pairs:     " << (test_all_pairs ? "true" : "false") << "\n";
 }
 
 } // namespace nixl_topo

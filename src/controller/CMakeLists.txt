@@ -20,6 +20,7 @@ target_include_directories(controller PRIVATE
 target_link_libraries(controller PRIVATE
     nixl_topo::common
     Threads::Threads
+    $<$<BOOL:${WITH_JSON}>:nlohmann_json::nlohmann_json>
 )
 
 # Installation

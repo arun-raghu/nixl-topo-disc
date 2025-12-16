@@ -1,5 +1,6 @@
 #include "controller.hpp"
 #include <iostream>
+#include <fstream>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -17,13 +18,28 @@ std::vector<pid_t> g_child_pids;
 std::string g_agent_binary_path;
 
 void print_usage(const char* program_name) {
-    std::cerr << "Usage: " << program_name << " -n <num_agents> [-t <timeout_sec>] [-a <agent_path>]\n"
+    std::cerr << "Usage: " << program_name << " -n <num_agents> [-t <timeout_sec>] [-a <agent_path>] [-c <config_file>]\n"
               << "\n"
               << "Options:\n"
               << "  -n <num_agents>   Number of agents to wait for (required)\n"
               << "  -t <timeout_sec>  Timeout in seconds for agent registration (default: 60)\n"
               << "  -a <agent_path>   Path to agent binary (default: ./agent in same dir as controller)\n"
-              << "  -h                Show this help message\n";
+              << "  -c <config_file>  Path to JSON config file for test parameters\n"
+              << "  -h                Show this help message\n"
+              << "\n"
+              << "Config file format (JSON):\n"
+              << "  {\n"
+              << "    \"ping_pong\": {\n"
+              << "      \"message_size\": 64,\n"
+              << "      \"iterations\": 10,\n"
+              << "      \"warmup_iterations\": 5,\n"
+              << "      \"result_timeout_sec\": 30\n"
+              << "    },\n"
+              << "    \"output\": {\n"
+              << "      \"csv_path\": \"/tmp/latency_matrix.csv\"\n"
+              << "    },\n"
+              << "    \"test_all_pairs\": true\n"
+              << "  }\n";
 }
 
 // Get directory containing the executable
@@ -121,6 +137,7 @@ int main(int argc, char* argv[]) {
     uint32_t num_agents = 0;
     uint32_t timeout_sec = 60;
     std::string agent_path;
+    std::string config_path;
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -145,6 +162,13 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             agent_path = argv[++i];
+        } else if (std::strcmp(argv[i], "-c") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: -c requires an argument\n";
+                print_usage(argv[0]);
+                return 1;
+            }
+            config_path = argv[++i];
         } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -178,7 +202,22 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    std::cout << "Starting controller for " << num_agents << " agents\n";
+    // Load test configuration
+    nixl_topo::TestConfig config;
+    if (!config_path.empty()) {
+        try {
+            config = nixl_topo::TestConfig::from_json(config_path);
+            std::cout << "Loaded config from: " << config_path << "\n";
+        } catch (const std::exception& e) {
+            std::cerr << "Error loading config: " << e.what() << "\n";
+            return 1;
+        }
+    } else {
+        std::cout << "No config file specified (-c), using defaults\n";
+    }
+    config.print();
+
+    std::cout << "\nStarting controller for " << num_agents << " agents\n";
     std::cout << "Registration timeout: " << timeout_sec << " seconds\n";
 
     // Initialize controller
@@ -271,68 +310,58 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Execute tests
-    // TODO: Later, read test configuration from cmd_config file provided at startup
-    // For now, issue a single ping-pong test between lowest numbered registered agents
+    // Execute tests using config parameters
     if (!g_shutdown_requested && num_agents >= 2) {
         std::cout << "\n=== Executing Tests ===\n";
 
-        // Find two lowest-numbered registered agents
-        uint32_t initiator_id = UINT32_MAX;
-        uint32_t responder_id = UINT32_MAX;
-        for (uint32_t i = 0; i < num_agents && responder_id == UINT32_MAX; ++i) {
-            if (controller.buffer().is_agent_registered(i)) {
-                if (initiator_id == UINT32_MAX) {
-                    initiator_id = i;
+        auto result_timeout = std::chrono::seconds(config.result_timeout_sec);
+        uint32_t test_num = 0;
+
+        // Test all unique pairs (i < j only, since ping-pong measures RTT)
+        for (uint32_t i = 0; i < num_agents && !g_shutdown_requested; ++i) {
+            for (uint32_t j = i + 1; j < num_agents && !g_shutdown_requested; ++j) {
+                if (!controller.buffer().is_agent_registered(i) ||
+                    !controller.buffer().is_agent_registered(j)) {
+                    continue;  // Skip unregistered agents
+                }
+
+                ++test_num;
+                std::cout << "\n--- Test " << test_num << ": initiator=" << i
+                          << " responder=" << j << " ---\n";
+
+                if (controller.issue_ping_pong_test(i, j, config.message_size,
+                                                     config.iterations, config.warmup_iterations)) {
+                    std::cout << "Waiting for results...\n";
+                    if (controller.wait_for_results({i}, controller.command_seq(), result_timeout)) {
+                        std::cout << "Test " << test_num << " completed successfully!\n";
+                        const auto* result = controller.get_result(i);
+                        if (result) {
+                            controller.store_test_result(i, j, *result);
+                        }
+                    } else {
+                        std::cerr << "Error: Timeout waiting for test " << test_num << " results\n";
+                    }
                 } else {
-                    responder_id = i;
+                    std::cerr << "Error: Failed to issue test " << test_num << "\n";
                 }
             }
         }
 
-        if (initiator_id != UINT32_MAX && responder_id != UINT32_MAX) {
-            // Issue ping-pong test with default parameters
-            uint64_t message_size = 64;
-            uint32_t iterations = 100;
-            uint32_t warmup_iterations = 10;
-            auto result_timeout = std::chrono::seconds(30);
+        std::cout << "\n=== Tests Complete ===\n";
 
-            // Test 1: initiator_id -> responder_id
-            std::cout << "\n--- Test 1: initiator=" << initiator_id
-                      << " responder=" << responder_id << " ---\n";
-
-            if (controller.issue_ping_pong_test(initiator_id, responder_id,
-                                                 message_size, iterations, warmup_iterations)) {
-                std::cout << "Waiting for results...\n";
-                if (controller.wait_for_results({initiator_id}, controller.command_seq(), result_timeout)) {
-                    std::cout << "Test 1 completed successfully!\n";
-                } else {
-                    std::cerr << "Error: Timeout waiting for test 1 results\n";
-                }
-            } else {
-                std::cerr << "Error: Failed to issue test 1\n";
-            }
-
-            // Test 2: swap roles - responder_id -> initiator_id
-            std::cout << "\n--- Test 2: initiator=" << responder_id
-                      << " responder=" << initiator_id << " ---\n";
-
-            if (controller.issue_ping_pong_test(responder_id, initiator_id,
-                                                 message_size, iterations, warmup_iterations)) {
-                std::cout << "Waiting for results...\n";
-                if (controller.wait_for_results({responder_id}, controller.command_seq(), result_timeout)) {
-                    std::cout << "Test 2 completed successfully!\n";
-                } else {
-                    std::cerr << "Error: Timeout waiting for test 2 results\n";
-                }
-            } else {
-                std::cerr << "Error: Failed to issue test 2\n";
-            }
+        // Write latency matrix to CSV file
+        std::ofstream csv_file(config.output_csv_path);
+        if (csv_file.is_open()) {
+            controller.log_latency_matrix_csv(csv_file);
+            csv_file.close();
+            std::cout << "Latency matrix written to: " << config.output_csv_path << "\n";
         } else {
-            std::cerr << "Error: Not enough registered agents for ping-pong test\n";
+            std::cerr << "Error: Could not open output file: " << config.output_csv_path << "\n";
+            // Fallback to stdout
+            std::cout << "\n=== Latency Matrix (CSV) ===\n";
+            controller.log_latency_matrix_csv(std::cout);
+            std::cout << "=== End Latency Matrix ===\n";
         }
-
-        std::cout << "\n=== Tests Complete ===\n\n";
     }
 
     // Send SHUTDOWN command to all agents

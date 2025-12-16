@@ -10,6 +10,40 @@
 
 namespace nixl_topo {
 
+/// Stores the result of a single ping-pong latency test
+struct LatencyResult {
+    uint32_t initiator_id;
+    uint32_t responder_id;
+    uint64_t avg_latency_ns;
+    uint64_t min_latency_ns;
+    uint64_t max_latency_ns;
+    bool success;
+};
+
+/// Configuration for ping-pong tests loaded from JSON
+struct TestConfig {
+    // Ping-pong test parameters
+    uint64_t message_size = 64;           // Payload size in bytes
+    uint32_t iterations = 10;             // Number of measured iterations
+    uint32_t warmup_iterations = 5;       // Number of warmup iterations
+    uint32_t result_timeout_sec = 30;     // Timeout waiting for results
+
+    // Output configuration
+    std::string output_csv_path = "/tmp/latency_matrix.csv";  // Default output path
+
+    // Test selection (empty = test all pairs)
+    bool test_all_pairs = true;           // If true, test all agent pairs
+
+    /// Load config from JSON file
+    /// @param filepath Path to JSON config file
+    /// @return Loaded TestConfig (uses defaults for missing fields)
+    /// @throws std::runtime_error if file cannot be opened or parsed
+    static TestConfig from_json(const std::string& filepath);
+
+    /// Log config to stdout
+    void print() const;
+};
+
 /// Main controller class for agent bootstrap and coordination.
 class Controller {
 public:
@@ -97,6 +131,21 @@ public:
     /// @return Pointer to result, or nullptr if not available
     const TestResult* get_result(uint32_t agent_id) const;
 
+    /// Store a test result for later CSV output.
+    /// @param initiator_id Agent that initiated the test
+    /// @param responder_id Agent that responded
+    /// @param result Test result from the initiator
+    void store_test_result(uint32_t initiator_id, uint32_t responder_id, const TestResult& result);
+
+    /// Log the latency matrix in CSV format.
+    /// Format: NxN matrix, row i col j = latency from node i to node j (ns)
+    /// Diagonal is 0, unmeasured pairs are -1
+    /// @param output Output stream (e.g., std::cout or file)
+    void log_latency_matrix_csv(std::ostream& output) const;
+
+    /// Get stored latency results.
+    const std::vector<LatencyResult>& latency_results() const { return latency_results_; }
+
 private:
     /// Load metadata for a newly registered agent so we can send it notifications.
     bool load_agent_metadata(uint32_t agent_id);
@@ -109,6 +158,7 @@ private:
     uint64_t command_seq_ = 0;
     std::vector<std::string> loaded_agent_names_;  // Agent names loaded for notifications
     std::vector<bool> agent_metadata_loaded_;       // Track which agents have been loaded
+    std::vector<LatencyResult> latency_results_;    // Stored test results for CSV output
 };
 
 } // namespace nixl_topo
