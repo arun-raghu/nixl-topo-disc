@@ -3,3 +3,9 @@ Be a software developer
 1. Create a new private repo nixl-topo-disc in github/arun-raghu
 2. Add NVidia nixl, gds, gdr and ucx repositories as sub-modules, such that current project can track latest code from each repo as needed
 3. create dir structure from "module structure" section in CLAUDE.md 
+4. Create Cmake that ensures dependencies are pulled/built/used in my project. Also, create build options to selectively build sub-projects
+5. Given we build NIXL plugins, modify CMake files so that necessary env vars with paths pointing to plugins we built are set when this project's applications (controller, agent) run
+  a. will your fixes work if applications run in containers? generate Dockerfile. Can the build system auto update the paths in this dockerfile when container image is created (we will likely create the image from within this project later)
+6. In src/topology/ create a file code_structure.txt that lists File/Purpose for each file in the dir. Include files (like testfiles to test this module) added in other dirs. 
+   add a rule in CLAUDE.md to keep the code structure txt file updated as the code changes in this directory
+   *similar file describing toplogy tests added in test dir, with a rule in CLAUDE.md to keep it updated with test changes*

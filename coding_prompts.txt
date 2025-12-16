@@ -1,0 +1,43 @@
+0. examine code in each of the submodules. Generate a CLAUDE.md file per submodule, and place it in the
+  relevant submodule toplevel dir
+1. Implement controller module.
+  S1: implement basic controller logic for NIXL registration and only enough controller buffer logic to bootstrap agents. I DO NOT want you to add code/structures for any other operations. Give me an overview of what you are going to add before starting with the sub-tasks 
+     - implementation of metadata blob creation is incorrect. refer @/home/rarun/nixl_trials/basic/nixl_peer.cpp. Discuss with me what you understood in terms of steps to perform for peers to connect via NIXL
+    *manually tested and confirmed that controller/multiple agents startup and rendezvous. Encountered several NIXL related issues, which I fixed by pointing Claude to an example NIXL peering test application I had implemented last night*
+     - commit all changes made related to Agent/controller module 
+     - create unit tests to check Agent/Controller module code added so far
+     - create a table listing Test/Purpose and write it to test_XXX_description.txt file in test dir. Add rule to keep this txt file updated as tests are added/updated 
+
+  S2: Implement controller code to add command in controller buffer for agents to perform ping-pong latency test
+     - Can controller send notification to an agent with NIXL API alone? What info can be sent in this notification?
+     - No. I have a constraint to only use memory for communicating cmds/results. What can be implemented with this constraint
+     - instead of every agent polling notification slot in controller buffer, can controller notify relevant agents that a new cmd is ready. Then agent can read
+  testcmd area in controller buffer to get the cmd info. Alternately, teh controller could write the cmd itself to the participating agents in their
+  registered buffer. Which approach is more efficient (fewer network trips, less overall network load)
+     - with cmd inbox, agent gets notified with cmd info. But how does agent know when to start executing the cmd, esp if peer agent needs to be ready for the cmd
+  (or start its side of cmd simultaneously) 
+     - controller can send cmd to receiver first, wait for some time then send cmd to sender. For bi-directional tests, send cmd simultaneously.
+  Regardless, we can implement the tests to have a warmup period, to account for any startup timing issues. what do you think? 
+
+2. Implement Agent module.
+  S1: implement basic Agent logic for NIXL registration and only enough logic to rendezvous with controller. I DO NOT want you to add code/structures for any other operations. Give me an overview of what you are going to add before starting with the sub-tasks 
+     - Why are there separate nixl_wrapper classes in agent/contr. can you refactor nixl_wrapper so both agent/controller can use the same implementation? discuss with me if there is good reason NOT to do this
+     - Ensure that Agent buffer allocated is pinned to enable 0-copy transfers
+
+  S2: Implement Agent code to collect the endpoint information received from controller buffer for all other agents, after controller notifies agent that rendezvous is complete. 
+      Next, write data to another Agent. Then Read back the data just written. Confirm that data recvd matches data sent
+
+  S3: Now plan to implement the Agent side code to receive cmd from controller, execute the cmd, and send back results to controller. note that only the initiator
+  sends back result
+
+3. Implement Topology discoverer
+  S1: Implement basic topology discovery algorithm which takes input latency matrix and outputs topology graph. Create unit test that accepts latency matrix as a csv with each line holding one row of matrix, and outputs generated graph Give me an overview of what you are planning. Discuss options with me before implementing
+     - implement Hierarchical clustering algo, output graph with nodes grouped in tiers, in text format (adjacency list)
+     - allow tier thresholds to be passed in a json config file. provide option to specify config-file path. use constructor defaults for tiers if no config file giv
+
+  S2: Add code to vizualize output using graphviz
+    *Manual inspection of output graph showed that nodes are clustered and connected to hidden nodes, but the clusters themselves are not connected! *
+  S3: enhance the algorithm to handle multi-level hierarchical clustering
+     - add unit tests to check inter-cluster connectivity
+     - add code to also include latency matrix in the output figures
+     - The edge labels for hidden nodes are incorrect. Does not add up to the latency shown in input matrix. Fix this!
