@@ -1,5 +1,6 @@
 #include "agent.hpp"
 #include <iostream>
+#include <cstdio>
 #include <csignal>
 #include <chrono>
 #include <thread>
@@ -16,6 +17,10 @@ void signal_handler(int signal) {
 } // anonymous namespace
 
 int main() {
+    // Disable stdout buffering for immediate log output
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
     // Set up signal handlers
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
@@ -34,6 +39,8 @@ int main() {
     std::cout << "Agent " << agent.agent_id() << " initialized successfully\n";
     std::cout << "  Total agents: " << agent.num_agents() << "\n";
     std::cout << "  Test buffer size: " << (agent.test_buffer_size() / (1024 * 1024)) << " MB\n";
+    std::cout << "  Test buffer address: 0x" << std::hex << reinterpret_cast<uintptr_t>(agent.test_buffer())
+              << std::dec << "\n";
 
     // Register with controller
     std::cout << "Registering with controller...\n";
@@ -54,6 +61,26 @@ int main() {
     }
 
     std::cout << "Rendezvous complete!\n";
+
+    // Discover peers
+    std::cout << "Discovering peers...\n";
+    if (!agent.discover_peers()) {
+        std::cerr << "Error: Failed to discover peers\n";
+        agent.shutdown();
+        return 1;
+    }
+    std::cout << "Peer discovery complete.\n";
+
+    // Verify data transfer with one peer (agent 0 tests with agent 1)
+    if (agent.num_agents() > 1 && agent.agent_id() == 0) {
+        uint32_t peer_id = 1;
+        std::cout << "Verifying data transfer with agent_" << peer_id << "...\n";
+        if (agent.verify_peer_transfer(peer_id, 4096)) {
+            std::cout << "Data transfer verification SUCCESS with agent_" << peer_id << "\n";
+        } else {
+            std::cerr << "Data transfer verification FAILED with agent_" << peer_id << "\n";
+        }
+    }
 
     // Keep running until shutdown signal
     std::cout << "Agent running. Press Ctrl+C to shutdown.\n";

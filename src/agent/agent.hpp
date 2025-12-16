@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <chrono>
 #include <string>
+#include <vector>
 
 namespace nixl_topo {
 
@@ -37,6 +38,33 @@ public:
     /// Shutdown the agent and release resources.
     void shutdown();
 
+    /// Discover all peer agents after rendezvous.
+    /// Reads peer AgentSlots from controller, loads their NIXL metadata.
+    /// @return true if all peers discovered successfully
+    bool discover_peers();
+
+    /// Write data to a peer agent's buffer.
+    /// @param peer_id Target agent ID
+    /// @param offset Offset within peer's buffer
+    /// @param data Source data
+    /// @param size Bytes to write
+    /// @return true on success
+    bool write_to_peer(uint32_t peer_id, size_t offset, const void* data, size_t size);
+
+    /// Read data from a peer agent's buffer.
+    /// @param peer_id Source agent ID
+    /// @param offset Offset within peer's buffer
+    /// @param data Destination buffer
+    /// @param size Bytes to read
+    /// @return true on success
+    bool read_from_peer(uint32_t peer_id, size_t offset, void* data, size_t size);
+
+    /// Verify data transfer with a peer: write pattern, read back, compare.
+    /// @param peer_id Target agent ID
+    /// @param size Bytes to transfer
+    /// @return true if data matches
+    bool verify_peer_transfer(uint32_t peer_id, size_t size);
+
     // Accessors
     uint32_t agent_id() const { return agent_id_; }
     uint32_t num_agents() const { return num_agents_; }
@@ -48,6 +76,13 @@ public:
     size_t test_buffer_size() const { return test_buffer_size_; }
 
 private:
+    // Peer info discovered after rendezvous
+    struct PeerInfo {
+        std::string nixl_name;          // "agent_X"
+        uintptr_t buffer_addr = 0;      // Peer's buffer address
+        bool connected = false;         // NIXL metadata loaded
+    };
+
     NixlWrapper nixl_;
     void* test_buffer_ = nullptr;
     size_t test_buffer_size_ = 0;
@@ -60,6 +95,9 @@ private:
     uint64_t ctrl_buffer_base_addr_ = 0;  // Controller's buffer base address for RDMA
     uint32_t ctrl_agent_slots_offset_ = 0;
     uint32_t ctrl_notification_offset_ = 0;
+
+    // Peer info discovered after rendezvous
+    std::vector<PeerInfo> peers_;
 
     bool initialized_ = false;
     bool rendezvous_complete_ = false;

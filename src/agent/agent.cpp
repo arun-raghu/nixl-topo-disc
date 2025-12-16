@@ -6,6 +6,7 @@
 #include <thread>
 #include <chrono>
 #include <iostream>
+#include <iomanip>
 #include <vector>
 
 namespace nixl_topo {
@@ -145,7 +146,7 @@ bool Agent::register_with_controller() {
 
     // Prepare AgentSlot data in wire format (big-endian for cross-platform RDMA)
     // Use registered test_buffer as source for RDMA write
-    // AgentSlot structure: populated_flag (8) + metadata_size (4) + reserved (4) + metadata blob
+    // AgentSlot structure: populated_flag (8) + buffer_base_addr (8) + metadata_size (4) + reserved (4) + metadata blob
     static_assert(AGENT_SLOT_SIZE <= DEFAULT_TEST_BUFFER_SIZE,
                   "AgentSlot must fit in test buffer");
 
@@ -154,15 +155,19 @@ bool Agent::register_with_controller() {
 
     uint8_t* slot_data = static_cast<uint8_t*>(test_buffer_);
 
-    // Set populated_flag = 1 (in wire format)
+    // Set populated_flag = 1 (in wire format) - offset 0
     uint64_t populated_flag = to_wire64(1);
     std::memcpy(slot_data, &populated_flag, sizeof(populated_flag));
 
-    // Set metadata_size (in wire format)
-    uint32_t metadata_size_wire = to_wire32(static_cast<uint32_t>(metadata.size()));
-    std::memcpy(slot_data + 8, &metadata_size_wire, sizeof(metadata_size_wire));
+    // Set buffer_base_addr (in wire format) - offset 8
+    uint64_t buffer_addr = to_wire64(reinterpret_cast<uintptr_t>(test_buffer_));
+    std::memcpy(slot_data + 8, &buffer_addr, sizeof(buffer_addr));
 
-    // Copy metadata blob (offset 16 = after AgentSlot header)
+    // Set metadata_size (in wire format) - offset 16
+    uint32_t metadata_size_wire = to_wire32(static_cast<uint32_t>(metadata.size()));
+    std::memcpy(slot_data + 16, &metadata_size_wire, sizeof(metadata_size_wire));
+
+    // Copy metadata blob (offset 24 = after AgentSlot header)
     // Note: metadata blob is opaque bytes from NIXL, not converted
     std::memcpy(slot_data + AGENT_SLOT_HEADER_SIZE, metadata.data(), metadata.size());
 
@@ -184,12 +189,21 @@ bool Agent::wait_for_rendezvous(std::chrono::milliseconds timeout) {
     }
 
     auto deadline = std::chrono::steady_clock::now() + timeout;
+    int poll_count = 0;
 
     while (std::chrono::steady_clock::now() < deadline) {
         // Check for notifications
         auto notifications = nixl_.get_notifications();
 
+        if (!notifications.empty()) {
+            std::cout << "Agent " << agent_id_ << ": Received " << notifications.size() << " notification(s)\n";
+        }
+
         for (const auto& [sender, msg] : notifications) {
+            std::cout << "Agent " << agent_id_ << ": Notification from '" << sender
+                      << "': '" << msg << "' (expecting '" << controller_name_
+                      << "':'" << NOTIF_RENDEZVOUS_COMPLETE << "')\n";
+
             if (sender == controller_name_ && msg == NOTIF_RENDEZVOUS_COMPLETE) {
                 rendezvous_complete_ = true;
                 return true;
@@ -197,10 +211,201 @@ bool Agent::wait_for_rendezvous(std::chrono::milliseconds timeout) {
         }
 
         // Sleep briefly between checks
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        poll_count++;
+
+        // Log progress every 10 seconds
+        if (poll_count % 100 == 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - (deadline - timeout)).count();
+            std::cout << "Agent " << agent_id_ << ": Still waiting for rendezvous... ("
+                      << elapsed << "s elapsed)\n";
+        }
     }
 
     return false;
+}
+
+bool Agent::discover_peers() {
+    if (!rendezvous_complete_) {
+        std::cerr << "Agent::discover_peers: rendezvous not complete\n";
+        return false;
+    }
+
+    // Initialize peers vector
+    peers_.resize(num_agents_);
+
+    // Read all agent slots from controller in a single NIXL call
+    // All slots are contiguous in the controller buffer
+    size_t slots_size = num_agents_ * AGENT_SLOT_SIZE;
+    uintptr_t slots_addr = ctrl_buffer_base_addr_ + ctrl_agent_slots_offset_;
+
+    if (!nixl_.read_from_remote(controller_name_, test_buffer_, slots_addr, slots_size)) {
+        std::cerr << "Agent::discover_peers: failed to read agent slots from controller\n";
+        return false;
+    }
+
+    // Parse each peer's slot
+    bool all_connected = true;
+    for (uint32_t peer_id = 0; peer_id < num_agents_; ++peer_id) {
+        if (peer_id == agent_id_) {
+            // Skip self - but mark as connected with own info
+            peers_[peer_id].nixl_name = "agent_" + std::to_string(peer_id);
+            peers_[peer_id].buffer_addr = reinterpret_cast<uintptr_t>(test_buffer_);
+            peers_[peer_id].connected = true;
+            continue;
+        }
+
+        uint8_t* slot_data = static_cast<uint8_t*>(test_buffer_) + (peer_id * AGENT_SLOT_SIZE);
+
+        // Parse AgentSlot header (in wire format)
+        uint64_t populated_flag_wire;
+        uint64_t buffer_addr_wire;
+        uint32_t metadata_size_wire;
+
+        std::memcpy(&populated_flag_wire, slot_data, sizeof(populated_flag_wire));
+        std::memcpy(&buffer_addr_wire, slot_data + 8, sizeof(buffer_addr_wire));
+        std::memcpy(&metadata_size_wire, slot_data + 16, sizeof(metadata_size_wire));
+
+        uint64_t populated_flag = from_wire64(populated_flag_wire);
+        uint64_t buffer_addr = from_wire64(buffer_addr_wire);
+        uint32_t metadata_size = from_wire32(metadata_size_wire);
+
+        if (populated_flag == 0) {
+            std::cerr << "Agent::discover_peers: peer " << peer_id << " slot not populated\n";
+            all_connected = false;
+            continue;
+        }
+
+        if (metadata_size > MAX_METADATA_BLOB_SIZE) {
+            std::cerr << "Agent::discover_peers: peer " << peer_id
+                      << " metadata size " << metadata_size << " exceeds max\n";
+            all_connected = false;
+            continue;
+        }
+
+        // Extract metadata blob (offset AGENT_SLOT_HEADER_SIZE = 24)
+        std::string metadata(reinterpret_cast<const char*>(slot_data + AGENT_SLOT_HEADER_SIZE),
+                            metadata_size);
+
+        // Load peer's NIXL metadata
+        std::string peer_name;
+        if (!nixl_.load_remote_metadata_blob(metadata, peer_name)) {
+            std::cerr << "Agent::discover_peers: failed to load metadata for peer " << peer_id << "\n";
+            all_connected = false;
+            continue;
+        }
+
+        // Store peer info
+        peers_[peer_id].nixl_name = peer_name;
+        peers_[peer_id].buffer_addr = buffer_addr;
+        peers_[peer_id].connected = true;
+
+        std::cout << "Agent::discover_peers: connected to peer " << peer_id
+                  << " (" << peer_name << ") at buffer 0x" << std::hex << buffer_addr << std::dec << "\n";
+    }
+
+    return all_connected;
+}
+
+bool Agent::write_to_peer(uint32_t peer_id, size_t offset, const void* data, size_t size) {
+    if (peer_id >= peers_.size() || !peers_[peer_id].connected) {
+        std::cerr << "Agent::write_to_peer: peer " << peer_id << " not connected\n";
+        return false;
+    }
+
+    if (peer_id == agent_id_) {
+        std::cerr << "Agent::write_to_peer: cannot write to self\n";
+        return false;
+    }
+
+    uintptr_t remote_addr = peers_[peer_id].buffer_addr + offset;
+    return nixl_.write_to_remote(peers_[peer_id].nixl_name, data, remote_addr, size);
+}
+
+bool Agent::read_from_peer(uint32_t peer_id, size_t offset, void* data, size_t size) {
+    if (peer_id >= peers_.size() || !peers_[peer_id].connected) {
+        std::cerr << "Agent::read_from_peer: peer " << peer_id << " not connected\n";
+        return false;
+    }
+
+    if (peer_id == agent_id_) {
+        std::cerr << "Agent::read_from_peer: cannot read from self\n";
+        return false;
+    }
+
+    uintptr_t remote_addr = peers_[peer_id].buffer_addr + offset;
+    return nixl_.read_from_remote(peers_[peer_id].nixl_name, data, remote_addr, size);
+}
+
+bool Agent::verify_peer_transfer(uint32_t peer_id, size_t size) {
+    if (peer_id >= peers_.size() || !peers_[peer_id].connected) {
+        std::cerr << "Agent::verify_peer_transfer: peer " << peer_id << " not connected\n";
+        return false;
+    }
+
+    if (size > test_buffer_size_ / 2) {
+        std::cerr << "Agent::verify_peer_transfer: size " << size << " too large\n";
+        return false;
+    }
+
+    // Use first half of test_buffer for send pattern, second half for readback
+    uint8_t* send_buf = static_cast<uint8_t*>(test_buffer_);
+    uint8_t* recv_buf = static_cast<uint8_t*>(test_buffer_) + (test_buffer_size_ / 2);
+
+    // Generate test pattern (deterministic based on agent_id and offset)
+    for (size_t i = 0; i < size; ++i) {
+        send_buf[i] = static_cast<uint8_t>((agent_id_ ^ i) & 0xFF);
+    }
+
+    // Print first 16 bytes of send data
+    std::cout << "Agent " << agent_id_ << ": Writing " << size << " bytes to peer " << peer_id
+              << " at 0x" << std::hex << peers_[peer_id].buffer_addr << std::dec << "\n";
+    std::cout << "  Send data (first 16 bytes): ";
+    for (size_t i = 0; i < std::min(size, size_t(16)); ++i) {
+        std::cout << std::hex << std::setfill('0') << std::setw(2) << (int)send_buf[i] << " ";
+    }
+    std::cout << std::dec << "\n";
+
+    // Write pattern to peer's buffer
+    if (!write_to_peer(peer_id, 0, send_buf, size)) {
+        std::cerr << "Agent::verify_peer_transfer: write_to_peer failed\n";
+        return false;
+    }
+    std::cout << "  Write completed\n";
+
+    // Clear recv buffer before read
+    std::memset(recv_buf, 0, size);
+
+    // Read back from peer's buffer
+    if (!read_from_peer(peer_id, 0, recv_buf, size)) {
+        std::cerr << "Agent::verify_peer_transfer: read_from_peer failed\n";
+        return false;
+    }
+
+    // Print first 16 bytes of received data
+    std::cout << "  Recv data (first 16 bytes): ";
+    for (size_t i = 0; i < std::min(size, size_t(16)); ++i) {
+        std::cout << std::hex << std::setfill('0') << std::setw(2) << (int)recv_buf[i] << " ";
+    }
+    std::cout << std::dec << "\n";
+
+    // Compare
+    if (std::memcmp(send_buf, recv_buf, size) != 0) {
+        std::cerr << "Agent::verify_peer_transfer: data mismatch\n";
+        // Find first mismatch for debugging
+        for (size_t i = 0; i < size; ++i) {
+            if (send_buf[i] != recv_buf[i]) {
+                std::cerr << "  First mismatch at offset " << i
+                          << ": sent 0x" << std::hex << (int)send_buf[i]
+                          << ", recv 0x" << (int)recv_buf[i] << std::dec << "\n";
+                break;
+            }
+        }
+        return false;
+    }
+
+    return true;
 }
 
 void Agent::shutdown() {
