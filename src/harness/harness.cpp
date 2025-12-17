@@ -479,7 +479,7 @@ void Harness::generate_tier_config(const std::string& config_path) const {
 
     // Build math explanation string
     std::ostringstream math_str;
-    math_str << "threshold = sqrt(intra_tier * inter_tier) = sqrt("
+    math_str << "threshold = geometric_mean(intra_tier, inter_tier) = sqrt("
              << max_intra_tier_us << "us * " << inter_tier_us << "us) = "
              << threshold_ns / 1000 << "us = " << threshold_ns << "ns";
 
