@@ -11,7 +11,10 @@
     "message_sizes": [1024, 4096, 16384, 65536, 262144, 1048576]
   },
   "output": {
-    "csv_path": "/output/latency_matrix.csv"
+    "csv_path": "/output/latency_matrix.csv",
+    "latency_detailed_csv_path": "/output/latency_detailed.csv",
+    "bandwidth_csv_path": "/output/bandwidth_matrix.csv",
+    "bandwidth_detailed_csv_path": "/output/bandwidth_detailed.csv"
   },
   "test_all_pairs": true,
   "run_bandwidth_tests": true
