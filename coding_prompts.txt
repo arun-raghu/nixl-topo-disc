@@ -18,6 +18,22 @@
   (or start its side of cmd simultaneously) 
      - controller can send cmd to receiver first, wait for some time then send cmd to sender. For bi-directional tests, send cmd simultaneously.
   Regardless, we can implement the tests to have a warmup period, to account for any startup timing issues. what do you think? 
+     S2.a: *basic testing of implemented code*
+     - In the agent code for ping pong latency, add prints when cmd received with cmd details. Stub ping-pong execution for now. Just sleep for 1s, then responder prints I'm done. initiator sends dummy results to
+  controller. controller prints results received. Don't delete prev ping-pong test code. put that under ifdef 0
+     - add controller code to execute tests after rendezvous. for now, issue only 1 ping-pong cmd. choose lowest numbered agents that registered. Later, this is the func which will pick up tests from a cmd_config file provided to
+  controller at startup
+     - build and run with 2 agents. log output to file in /tmp. tell me the filenames for each
+     *iterative debugging to make Claude fix implementation errors.
+     *   implemented code was overwriting main controller buffer area shared with agents, preventing agents from peering! Created separate cmd buffer area to send a few cmds in parallel*
+     *   Controller was sending peer buffer addresses per cmd which was redundant. Added PEERS_DISCOVERD sync step to protocol. Controller starts sending cmds only after all agents send this*
+   
+   S3: Add controller code to store the received results per test. Once all ping-pong tests are completed, log a latency matrix in csv format. This format should be the same as the format used by topology module for its
+  input
+     *chained output from controller to topology_viz. WORKS! MVP-0 completed!! :-) *
+
+   S4: Add code to implement the cmd to execute throughput performance measurements. refer to the module_comms design for details 
+     - implement the message size sweep for throughput test. confirm that we have available buffer size for the largest msg size
 
 2. Implement Agent module.
   S1: implement basic Agent logic for NIXL registration and only enough logic to rendezvous with controller. I DO NOT want you to add code/structures for any other operations. Give me an overview of what you are going to add before starting with the sub-tasks 
@@ -41,3 +57,9 @@
      - add unit tests to check inter-cluster connectivity
      - add code to also include latency matrix in the output figures
      - The edge labels for hidden nodes are incorrect. Does not add up to the latency shown in input matrix. Fix this!
+
+
+4. Implement Test harness
+   S1: I want to create a test harness that will create containers for controller and agent. I want the agent containers to be composed into a virtual cluster with virtual NICs of potentially differing bandwidth connecting them.
+     - No shared volume between controller and agents. I want controller to programmatically start agent containers. Can I still compose topology with virtual nics in harness?
+     - I don't care about configurable IP address -- pick some default, add with agent_id to get each agent's IP. Defer tc to next phase
