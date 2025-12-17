@@ -134,6 +134,8 @@ Enables containerized cluster simulation with configurable network topology usin
 
 Example output from an 8-agent two-rack simulation: [output/2025-12-17_02-21-11/](output/2025-12-17_02-21-11/)
 
+Full test with bandwidth and latency sweeps (4-agent two-rack): [output/2025-12-17_03-03-23/](output/2025-12-17_03-03-23/)
+
 ## Simulation Assumptions
 
 1. **NIXL-only IPC**: All data transfer uses NIXL RDMA primitives; no TCP sockets for test data
