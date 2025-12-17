@@ -134,6 +134,8 @@ The harness mounts a host directory into the controller container at `/output`. 
 
 When running `topology_viz` on results from a simulated cluster, the tier threshold configuration should match the latency values used by `tc` to set up the network topology. This ensures the topology inference correctly identifies the simulated rack boundaries.
 
+The harness automatically generates a `tier_config.json` file during result collection, using the geometric mean of intra-tier and inter-tier latencies as the threshold: `threshold = sqrt(intra_tier * inter_tier)`. This ensures proper separation between tiers without manual configuration.
+
 **Example:** If your cluster config uses:
 - `intra_tier_latency_us: 100` (100us within rack)
 - `inter_tier.latency_us: 5000` (5ms between racks)
