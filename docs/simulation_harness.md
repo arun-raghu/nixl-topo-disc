@@ -110,7 +110,22 @@ ls ./output/
 
 ## Output Files
 
-After `collect`, results are saved to a timestamped subdirectory:
-- `latency_matrix.csv` - Pairwise latencies
-- `bandwidth_matrix.csv` - Pairwise bandwidth
+The harness mounts a host directory into the controller container at `/output`. When tests complete, the `collect` command copies results from the container to a timestamped subdirectory on the host.
+
+**Specifying output directory:**
+```bash
+# Use custom output directory
+./build/bin/harness --config cluster.json --output /path/to/results up
+./build/bin/harness --config cluster.json --output /path/to/results collect
+```
+
+**Default behavior:**
+- Output directory: `./output` (relative to current working directory)
+- Results copied to: `<output_dir>/<timestamp>/`
+
+**Files collected:**
+- `latency_matrix.csv` - Pairwise latencies (nanoseconds)
+- `bandwidth_matrix.csv` - Pairwise bandwidth (MB/s)
+- `latency_detailed.csv` - Latency sweep results (if enabled)
+- `bandwidth_detailed.csv` - Bandwidth at each message size
 - `topology.svg` - Inferred topology visualization
