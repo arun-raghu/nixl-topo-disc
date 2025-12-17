@@ -34,7 +34,7 @@ NxN latency matrix CSV file (nanoseconds), as produced by the controller.
 
 ## Tier Configuration
 
-Latency thresholds determine how nodes are grouped into tiers:
+Latency thresholds determine how nodes are grouped into tiers. Both the threshold values and number of tiers are fully configurable via JSON.
 
 | Tier | Default Threshold | Interpretation |
 |------|-------------------|----------------|
@@ -53,21 +53,38 @@ Latency thresholds determine how nodes are grouped into tiers:
 }
 ```
 
+The `tier_thresholds` array can have any number of entries to define custom tier boundaries.
+
 ## Output Graph Structure
 
-The topology graph contains:
+**Example: 4-node two-rack cluster**
 
-- **Physical Nodes**: Agents/GPUs in the cluster (solid boxes in visualization)
-- **Hidden Nodes**: Inferred switches and shared links (dashed diamonds)
-- **Edges**: Connections with latency labels
+Input latency matrix (nanoseconds):
+```
+       Node0  Node1  Node2  Node3
+Node0      0   3000   8000   8500
+Node1   3000      0   8200   8100
+Node2   8000   8200      0   2800
+Node3   8500   8100   2800      0
+```
 
-**Hidden Node Types:**
-| Type | Description |
-|------|-------------|
-| NVSWITCH | Inferred NVSwitch (intra-node GPU interconnect) |
-| TOR_SWITCH | Top-of-Rack switch |
-| SPINE_SWITCH | Spine/aggregation switch |
-| SHARED_LINK | Shared bandwidth bottleneck |
+Output topology graph:
+```
+                 [Spine-0]
+                /         \
+               /           \
+          [ToR-0]        [ToR-1]
+          /    \          /    \
+      [Node0] [Node1] [Node2] [Node3]
+        |________|      |________|
+         ~3000ns          ~2800ns
+              |__________|
+                 ~8000ns
+```
+
+- **Physical Nodes** (boxes): Node0-3 are the measured agents
+- **Hidden Nodes** (inferred): ToR-0, ToR-1 (rack switches), Spine-0 (aggregation)
+- **Edges**: Labeled with latency; nodes with <5us grouped under same switch
 
 ## Interpreting Visualizations
 

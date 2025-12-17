@@ -85,6 +85,9 @@ cmake --build . --target docker-build
 
 # Or directly with docker
 docker build -t nixl-topo-disc:latest .
+
+# Run controller with 4 agents
+docker run --rm nixl-topo-disc:latest controller -n 4
 ```
 
 ### Example Configuration (JSON)
@@ -125,6 +128,10 @@ See [docs/interpreting_results.md](docs/interpreting_results.md) for output file
 
 Infers physical network topology from latency measurements using hierarchical clustering. Groups nodes into tiers based on latency thresholds and identifies hidden network elements (switches) that explain observed communication patterns. See [docs/topology_module.md](docs/topology_module.md) for details.
 
+## Simulations with Test Harness
+
+Enables containerized cluster simulation with configurable network topology using Linux traffic control (`tc`). Simulate multi-rack deployments on a single machine by injecting artificial latency between agent containers. Build with `cmake --build build --target harness`. See [docs/simulation_harness.md](docs/simulation_harness.md) for details.
+
 ## Simulation Assumptions
 
 1. **NIXL-only IPC**: All data transfer uses NIXL RDMA primitives; no TCP sockets for test data
@@ -154,10 +161,6 @@ Infers physical network topology from latency measurements using hierarchical cl
 cd build
 ctest --output-on-failure
 ```
-
-## Simulations with Test Harness
-
-See [docs/simulation_harness.md](docs/simulation_harness.md) for containerized cluster simulation with network shaping.
 
 ## Project Structure
 
