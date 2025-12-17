@@ -1,0 +1,7 @@
+{
+  "_comment": "Auto-generated from cluster config network_shaping values",
+  "_math": "threshold = sqrt(intra_tier * inter_tier) = sqrt(50us * 500us) = 158us = 158113ns",
+  "tier_thresholds_ns": [158113],
+  "linkage": "single",
+  "min_cluster_size_for_switch": 2
+}

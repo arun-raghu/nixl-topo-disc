@@ -1,0 +1,6 @@
+# Latency matrix (nanoseconds) - symmetric
+# Row i, Column j = RTT latency between node i and node j
+0,125833,1066594,1066239
+125833,0,1068109,1068841
+1066594,1068109,0,121407
+1066239,1068841,121407,0

@@ -1,0 +1,6 @@
+# Bandwidth matrix (MB/s) - unidirectional, peak values
+# Row i, Column j = peak bandwidth from node i to node j
+0,3390,701,695
+3308,0,746,717
+755,729,0,3244
+758,764,3280,0
