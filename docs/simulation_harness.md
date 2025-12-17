@@ -129,3 +129,29 @@ The harness mounts a host directory into the controller container at `/output`. 
 - `latency_detailed.csv` - Latency sweep results (if enabled)
 - `bandwidth_detailed.csv` - Bandwidth at each message size
 - `topology.svg` - Inferred topology visualization
+
+## Topology Visualization with Simulated Clusters
+
+When running `topology_viz` on results from a simulated cluster, the tier threshold configuration should match the latency values used by `tc` to set up the network topology. This ensures the topology inference correctly identifies the simulated rack boundaries.
+
+**Example:** If your cluster config uses:
+- `intra_tier_latency_us: 100` (100us within rack)
+- `inter_tier.latency_us: 5000` (5ms between racks)
+
+Then configure `topology_viz` with matching thresholds:
+```bash
+# Create tier config matching simulated latencies
+cat > tier_config.json << 'EOF'
+{
+  "tier_thresholds": [500000, 3000000]
+}
+EOF
+
+# tier_thresholds in nanoseconds:
+#   < 500us  (500000ns)  -> Tier 0 (same rack)
+#   < 3ms    (3000000ns) -> Tier 1 (different rack, same cluster)
+
+./build/bin/topology_viz latency_matrix.csv -c tier_config.json -o topology.svg
+```
+
+This alignment between simulated latencies and inference thresholds allows the topology constructor to correctly group nodes that share the same simulated rack.
