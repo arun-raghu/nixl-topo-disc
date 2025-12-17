@@ -441,7 +441,9 @@ TEST(ControllerBufferTest, BufferSize_MatchesExpected) {
 
     size_t expected_size = sizeof(BufferHeader) +
                           4 * AGENT_SLOT_SIZE +
-                          4 * NOTIFICATION_SLOT_SIZE;
+                          4 * NOTIFICATION_SLOT_SIZE +
+                          4 * TEST_RESULT_SIZE +
+                          CONTROLLER_CMD_AREA_SIZE;
 
     EXPECT_EQ(buffer.size(), expected_size);
 }

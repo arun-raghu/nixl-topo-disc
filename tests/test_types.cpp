@@ -89,7 +89,7 @@ TEST(BufferHeaderTest, MagicConstant_IsCorrect) {
 }
 
 TEST(BufferHeaderTest, VersionConstant_IsCorrect) {
-    EXPECT_EQ(BufferHeader::VERSION, 1u);
+    EXPECT_EQ(BufferHeader::VERSION, 2u);
 }
 
 TEST(BufferHeaderTest, ToWire_ConvertAllFields) {
