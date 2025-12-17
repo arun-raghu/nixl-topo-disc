@@ -1,0 +1,5 @@
+{
+  "tier_thresholds_ns": [707106],
+  "linkage": "single",
+  "min_cluster_size_for_switch": 2
+}
