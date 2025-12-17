@@ -477,7 +477,15 @@ void Harness::generate_tier_config(const std::string& config_path) const {
         return;
     }
 
+    // Build math explanation string
+    std::ostringstream math_str;
+    math_str << "threshold = sqrt(intra_tier * inter_tier) = sqrt("
+             << max_intra_tier_us << "us * " << inter_tier_us << "us) = "
+             << threshold_ns / 1000 << "us = " << threshold_ns << "ns";
+
     ofs << "{\n";
+    ofs << "  \"_comment\": \"Auto-generated from cluster config network_shaping values\",\n";
+    ofs << "  \"_math\": \"" << math_str.str() << "\",\n";
     ofs << "  \"tier_thresholds_ns\": [" << threshold_ns << "],\n";
     ofs << "  \"linkage\": \"single\",\n";
     ofs << "  \"min_cluster_size_for_switch\": 2\n";
