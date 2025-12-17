@@ -38,7 +38,7 @@ struct HiddenNode {
     uint32_t hv_id;                   // Unique hidden node ID
     HiddenNodeType type;              // Type of hidden node
     uint32_t tier;                    // Topology tier level
-    std::string inferred_label;       // Label (e.g., "NVSwitch-0", "ToR-0")
+    std::string inferred_label;       // Label (e.g., "Tier0Switch-0", "ToR-0")
     double confidence;                // Confidence score (0.0-1.0)
 
     HiddenNode()

@@ -28,7 +28,7 @@ enum class NodeType : uint8_t {
 };
 
 enum class HiddenNodeType : uint8_t {
-    NVSWITCH = 0,
+    TIER0_SWITCH = 0,
     TOR_SWITCH = 1,
     SPINE_SWITCH = 2,
     SHARED_LINK = 3,
@@ -85,7 +85,7 @@ inline const char* to_string(NodeType type) {
 
 inline const char* to_string(HiddenNodeType type) {
     switch (type) {
-        case HiddenNodeType::NVSWITCH: return "NVSWITCH";
+        case HiddenNodeType::TIER0_SWITCH: return "TIER0_SWITCH";
         case HiddenNodeType::TOR_SWITCH: return "TOR_SWITCH";
         case HiddenNodeType::SPINE_SWITCH: return "SPINE_SWITCH";
         case HiddenNodeType::SHARED_LINK: return "SHARED_LINK";

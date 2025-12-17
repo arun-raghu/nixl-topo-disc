@@ -444,7 +444,7 @@ double TopologyBuilder::calculate_confidence(
 HiddenNodeType TopologyBuilder::infer_hidden_type(uint32_t tier) {
     switch (tier) {
         case 0:
-            return HiddenNodeType::NVSWITCH;  // Intra-node interconnect
+            return HiddenNodeType::TIER0_SWITCH;  // Intra-node interconnect
         case 1:
             return HiddenNodeType::TOR_SWITCH;  // Top-of-rack
         case 2:

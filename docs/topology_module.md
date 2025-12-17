@@ -39,7 +39,7 @@ Latency thresholds determine how nodes are grouped into tiers. Both the threshol
 | Tier | Default Threshold | Interpretation |
 |------|-------------------|----------------|
 | 0 | < 5 us | Intra-node (NVLink, PCIe) |
-| 1 | < 15 us | Intra-rack (NVSwitch, ToR switch) |
+| 1 | < 15 us | Intra-rack (ToR switch) |
 | 2 | < 50 us | Inter-rack (spine switch) |
 | 3+ | >= 50 us | Inter-pod / WAN |
 
