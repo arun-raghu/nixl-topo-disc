@@ -171,21 +171,31 @@ ctest --output-on-failure
 ```
 nixl-topo-disc/
 ├── src/
-│   ├── agent/          # Agent process implementation
-│   ├── controller/     # Controller orchestration
-│   ├── topology/       # Topology inference module
-│   └── common/         # Shared types, NIXL wrapper
-├── tests/              # Unit tests
-├── docs/               # Design documentation
+│   ├── agent/           # Agent process implementation
+│   ├── common/          # Shared types, NIXL wrapper
+│   ├── controller/      # Controller orchestration
+│   ├── harness/         # Test harness for simulations
+│   │   ├── config/      # Cluster config parsing
+│   │   ├── network/     # Docker network management
+│   │   ├── scenarios/   # Example cluster configs
+│   │   └── tc/          # Traffic control (tc) management
+│   └── topology/        # Topology inference module
+├── tests/               # Unit tests
+├── docs/                # Design documentation
+├── docker/              # Dockerfile templates
+├── cmake/               # CMake modules
+├── include/             # Public headers
 ├── submodules/
-│   ├── nixl/           # NVIDIA NIXL SDK
-│   └── ucx/            # UCX communication library
+│   ├── nixl/            # NVIDIA NIXL SDK
+│   ├── ucx/             # UCX communication library
+│   ├── gdr/             # GPUDirect RDMA
+│   └── gds/             # GPUDirect Storage
 └── CMakeLists.txt
 ```
 
 ## AI Agent Usage
 
-All code in this repository was generated using AI agents (Claude Code). The repository structure itself was generated via prompts in [repo_prompts.txt](repo_prompts.txt). The overall design for the agent to create this code was generated via [design_prompts.txt](design_prompts.txt). See [coding_prompts.txt](coding_prompts.txt) for the prompts used to generate the code.
+All code in this repository was generated using AI agents (Claude Code). The repository structure itself was generated via prompts in [repo_prompts.txt](repo_prompts.txt). The overall design for the agent to create this code was generated via [design_prompts.txt](design_prompts.txt). See [coding_prompts.txt](coding_prompts.txt) for the prompts used to generate the code. Here are some of my [learnings](docs/learnings.md) from this exercise.
 
 ## License
 
