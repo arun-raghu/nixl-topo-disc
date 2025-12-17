@@ -108,7 +108,7 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "Results collected to: " << results_dir << "\n";
     } else if (command == "down") {
-        if (!harness.down()) {
+        if (!harness.down(output_dir)) {
             return 1;
         }
     } else if (command == "status") {

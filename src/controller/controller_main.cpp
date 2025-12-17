@@ -21,6 +21,10 @@ std::string g_agent_binary_path;
 bool g_harness_mode = false;
 std::string g_harness_network;
 std::string g_harness_image;
+std::string g_tc_ready_path;  // Path to tc_ready signal file
+
+// Shutdown flag
+volatile std::sig_atomic_t g_shutdown_requested = 0;
 
 void print_usage(const char* program_name) {
     std::cerr << "Usage: " << program_name << " -n <num_agents> [-t <timeout_sec>] [-a <agent_path>] [-c <config_file>]\n"
@@ -137,6 +141,7 @@ bool spawn_agent_container(uint32_t agent_id, const std::map<std::string, std::s
     cmd += " --name " + container_name;
     cmd += " --network " + g_harness_network;
     cmd += " --ip " + agent_ip;
+    cmd += " --cap-add=NET_ADMIN";  // Required for tc network shaping
 
     // Add environment variables
     for (const auto& [key, value] : env_vars) {
@@ -172,7 +177,36 @@ void terminate_agents() {
     g_child_pids.clear();
 }
 
-volatile std::sig_atomic_t g_shutdown_requested = 0;
+// Wait for tc rules to be applied (signal file from harness)
+bool wait_for_tc_ready(int timeout_sec) {
+    if (g_tc_ready_path.empty()) {
+        return true;  // No wait needed
+    }
+
+    std::cout << "Waiting for network shaping to be applied...\n";
+    std::cout << "  Signal file: " << g_tc_ready_path << "\n";
+
+    auto start = std::chrono::steady_clock::now();
+    auto timeout = std::chrono::seconds(timeout_sec);
+
+    while (!g_shutdown_requested) {
+        // Check if signal file exists
+        if (access(g_tc_ready_path.c_str(), F_OK) == 0) {
+            std::cout << "Network shaping ready!\n";
+            return true;
+        }
+
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        if (elapsed >= timeout) {
+            std::cerr << "Warning: Timeout waiting for tc_ready signal, proceeding anyway\n";
+            return true;  // Continue anyway, tests will just run without shaping
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    return false;
+}
 
 void signal_handler(int signal) {
     (void)signal;
@@ -253,9 +287,18 @@ int main(int argc, char* argv[]) {
         g_harness_network = network_env;
         g_harness_image = image_env;
 
+        // Check for tc ready signal path (optional)
+        const char* tc_ready_env = std::getenv("HARNESS_TC_READY_PATH");
+        if (tc_ready_env) {
+            g_tc_ready_path = tc_ready_env;
+        }
+
         std::cout << "Harness mode enabled\n";
         std::cout << "  Network: " << g_harness_network << "\n";
         std::cout << "  Image: " << g_harness_image << "\n";
+        if (!g_tc_ready_path.empty()) {
+            std::cout << "  TC ready path: " << g_tc_ready_path << "\n";
+        }
     }
 
     // Determine agent binary path (only needed in non-harness mode)
@@ -401,6 +444,16 @@ int main(int argc, char* argv[]) {
     // Wait for all agents to complete peer discovery before sending commands
     if (!controller.wait_for_peer_discovery(std::chrono::seconds(timeout_sec))) {
         std::cerr << "Error: Timeout waiting for peer discovery\n";
+        if (!g_harness_mode) {
+            terminate_agents();
+        }
+        controller.shutdown();
+        return 1;
+    }
+
+    // Wait for network shaping to be applied (if configured)
+    if (!wait_for_tc_ready(timeout_sec)) {
+        std::cerr << "Aborted while waiting for tc ready signal\n";
         if (!g_harness_mode) {
             terminate_agents();
         }

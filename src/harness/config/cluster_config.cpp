@@ -61,6 +61,11 @@ ClusterConfig ClusterConfig::from_json(const std::string& filepath) {
         config.controller_ip = j["controller_ip"].get<std::string>();
     }
 
+    // Network shaping configuration (optional)
+    if (j.contains("network_shaping")) {
+        config.network_shaping = NetworkShapingConfig::from_json(j["network_shaping"]);
+    }
+
 #else
     throw std::runtime_error("JSON support not enabled. Rebuild with -DWITH_JSON=ON");
 #endif
@@ -77,6 +82,14 @@ std::string ClusterConfig::get_agent_ip(uint32_t agent_id) const {
 
 std::string ClusterConfig::get_agent_container_name(uint32_t agent_id) const {
     return std::string(DEFAULT_AGENT_NAME_PREFIX) + std::to_string(agent_id);
+}
+
+std::map<uint32_t, std::string> ClusterConfig::get_all_agent_ips() const {
+    std::map<uint32_t, std::string> ips;
+    for (uint32_t i = 0; i < num_agents; i++) {
+        ips[i] = get_agent_ip(i);
+    }
+    return ips;
 }
 
 }  // namespace harness

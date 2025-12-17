@@ -8,6 +8,9 @@
 
 #include <string>
 #include <cstdint>
+#include <map>
+
+#include "../tc/tc_manager.hpp"
 
 namespace harness {
 
@@ -35,6 +38,9 @@ struct ClusterConfig {
     std::string network_subnet = DEFAULT_NETWORK_SUBNET;
     std::string controller_ip = DEFAULT_CONTROLLER_IP;
 
+    // Network shaping configuration (optional)
+    NetworkShapingConfig network_shaping;
+
     /**
      * Load configuration from JSON file
      * @param filepath Path to cluster.json
@@ -56,6 +62,12 @@ struct ClusterConfig {
      * @return Container name (e.g., "topo-agent-0")
      */
     std::string get_agent_container_name(uint32_t agent_id) const;
+
+    /**
+     * Get map of all agent IPs
+     * @return Map of agent_id -> IP address
+     */
+    std::map<uint32_t, std::string> get_all_agent_ips() const;
 };
 
 }  // namespace harness

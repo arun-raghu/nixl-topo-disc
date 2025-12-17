@@ -68,6 +68,7 @@ RUN apt-get update && apt-get install -y \
     librdmacm1 \
     libnuma1 \
     docker.io \
+    iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed files from builder

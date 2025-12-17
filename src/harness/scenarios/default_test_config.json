@@ -1,0 +1,13 @@
+{
+  "ping_pong": {
+    "message_size": 64,
+    "iterations": 100,
+    "warmup_iterations": 10,
+    "result_timeout_sec": 30
+  },
+  "output": {
+    "csv_path": "/output/latency_matrix.csv"
+  },
+  "test_all_pairs": true,
+  "run_bandwidth_tests": false
+}

@@ -8,6 +8,7 @@ set(HARNESS_SOURCES
     harness.cpp
     config/cluster_config.cpp
     network/network_manager.cpp
+    tc/tc_manager.cpp
 )
 
 add_executable(harness ${HARNESS_SOURCES})

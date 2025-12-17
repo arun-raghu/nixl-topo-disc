@@ -1,0 +1,24 @@
+{
+  "name": "two-rack-quick",
+  "num_agents": 4,
+  "image": "nixl-topo-disc:latest",
+  "network_shaping": {
+    "enabled": true,
+    "tiers": [
+      {
+        "name": "rack-0",
+        "agents": [0, 1],
+        "intra_tier_latency_us": 100
+      },
+      {
+        "name": "rack-1",
+        "agents": [2, 3],
+        "intra_tier_latency_us": 100
+      }
+    ],
+    "inter_tier": {
+      "latency_us": 1000,
+      "jitter_us": 100
+    }
+  }
+}
