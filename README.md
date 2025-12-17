@@ -132,6 +132,8 @@ Infers physical network topology from latency measurements using hierarchical cl
 
 Enables containerized cluster simulation with configurable network topology using Linux traffic control (`tc`). Simulate multi-rack deployments on a single machine by injecting artificial latency between agent containers. Build with `cmake --build build --target harness`. See [docs/simulation_harness.md](docs/simulation_harness.md) for details.
 
+Example output from an 8-agent two-rack simulation: [output/2025-12-17_02-21-11/](output/2025-12-17_02-21-11/)
+
 ## Simulation Assumptions
 
 1. **NIXL-only IPC**: All data transfer uses NIXL RDMA primitives; no TCP sockets for test data
