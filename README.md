@@ -119,11 +119,11 @@ docker build -t nixl-topo-disc:latest .
 
 ## Interpreting Results
 
-See [docs/interpreting_results.txt](docs/interpreting_results.txt) for output file formats and sample data.
+See [docs/interpreting_results.md](docs/interpreting_results.md) for output file formats and sample data.
 
 ## Topology Constructor Module
 
-See [docs/topology_module.txt](docs/topology_module.txt) for topology inference, visualization commands, and tier configuration.
+Infers physical network topology from latency measurements using hierarchical clustering. Groups nodes into tiers based on latency thresholds and identifies hidden network elements (switches) that explain observed communication patterns. See [docs/topology_module.md](docs/topology_module.md) for details.
 
 ## Simulation Assumptions
 
@@ -157,7 +157,7 @@ ctest --output-on-failure
 
 ## Simulations with Test Harness
 
-See [docs/simulation_harness.txt](docs/simulation_harness.txt) for containerized cluster simulation with network shaping.
+See [docs/simulation_harness.md](docs/simulation_harness.md) for containerized cluster simulation with network shaping.
 
 ## Project Structure
 
