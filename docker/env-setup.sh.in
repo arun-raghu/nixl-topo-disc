@@ -1,0 +1,20 @@
+#!/bin/bash
+# =============================================================================
+# Environment setup for nixl-topo-disc (local development)
+# Auto-generated from CMake - edit env-setup.sh.in and re-run cmake
+#
+# Usage: source build/bin/env-setup.sh
+# =============================================================================
+
+# Build directory paths (for local development)
+BUILD_DIR="@CMAKE_BINARY_DIR@"
+DEPS_DIR="${BUILD_DIR}/deps_install"
+
+export LD_LIBRARY_PATH="${DEPS_DIR}/ucx/lib:${DEPS_DIR}/nixl/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export NIXL_PLUGIN_DIR="${DEPS_DIR}/nixl/lib/x86_64-linux-gnu/plugins"
+export PATH="${BUILD_DIR}/bin:${PATH}"
+
+echo "Environment configured for nixl-topo-disc development"
+echo "  LD_LIBRARY_PATH includes: ${DEPS_DIR}/ucx/lib, ${DEPS_DIR}/nixl/lib/x86_64-linux-gnu"
+echo "  NIXL_PLUGIN_DIR: ${NIXL_PLUGIN_DIR}"
+echo "  PATH includes: ${BUILD_DIR}/bin"

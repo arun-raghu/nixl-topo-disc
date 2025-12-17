@@ -1,0 +1,50 @@
+#!/bin/bash
+# =============================================================================
+# Entrypoint for nixl-topo-disc container
+# Auto-generated from CMake - edit entrypoint.sh.in and re-run cmake
+# =============================================================================
+
+set -e
+
+# Paths configured by CMake
+INSTALL_PREFIX="@CONTAINER_INSTALL_PREFIX@"
+BIN_DIR="${INSTALL_PREFIX}/bin"
+
+# Ensure environment is set (redundant with Dockerfile ENV, but ensures correctness)
+export LD_LIBRARY_PATH="@CONTAINER_LIB_PATH@:@CONTAINER_UCX_LIB_PATH@:${LD_LIBRARY_PATH:-}"
+export NIXL_PLUGIN_DIR="@CONTAINER_NIXL_PLUGIN_DIR@"
+
+# If first argument is a known executable, run it directly
+case "$1" in
+    controller|agent)
+        exec "${BIN_DIR}/$@"
+        ;;
+    -*)
+        # Flags passed, default to controller
+        exec "${BIN_DIR}/controller" "$@"
+        ;;
+    "")
+        # No arguments, show help
+        echo "Usage: docker run <image> <command> [args]"
+        echo ""
+        echo "Commands:"
+        echo "  controller  Run the topology controller"
+        echo "  agent       Run the topology agent"
+        echo ""
+        echo "Examples:"
+        echo "  docker run <image> controller -n 4"
+        echo "  docker run <image> agent"
+        echo ""
+        echo "Environment variables:"
+        echo "  NIXL_PLUGIN_DIR=${NIXL_PLUGIN_DIR}"
+        echo "  LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
+        ;;
+    --help|-h)
+        # Show help
+        exec "${BIN_DIR}/controller" --help
+        ;;
+    *)
+        # Unknown command, try to execute as-is
+        exec "$@"
+        ;;
+esac

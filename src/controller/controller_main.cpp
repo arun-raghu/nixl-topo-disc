@@ -17,6 +17,11 @@ namespace {
 std::vector<pid_t> g_child_pids;
 std::string g_agent_binary_path;
 
+// Harness mode: spawn containers instead of processes
+bool g_harness_mode = false;
+std::string g_harness_network;
+std::string g_harness_image;
+
 void print_usage(const char* program_name) {
     std::cerr << "Usage: " << program_name << " -n <num_agents> [-t <timeout_sec>] [-a <agent_path>] [-c <config_file>]\n"
               << "\n"
@@ -41,12 +46,19 @@ void print_usage(const char* program_name) {
               << "      \"warmup_iterations\": 10,\n"
               << "      \"window_size\": 64\n"
               << "    },\n"
+              << "    \"latency_sweep\": {\n"
+              << "      \"enabled\": false,\n"
+              << "      \"message_sizes\": [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536],\n"
+              << "      \"iterations\": 1000,\n"
+              << "      \"warmup_iterations\": 100\n"
+              << "    },\n"
               << "    \"output\": {\n"
               << "      \"csv_path\": \"/tmp/latency_matrix.csv\",\n"
               << "      \"bandwidth_csv_path\": \"/tmp/bandwidth_matrix.csv\"\n"
               << "    },\n"
               << "    \"test_all_pairs\": true,\n"
-              << "    \"run_bandwidth_tests\": true\n"
+              << "    \"run_bandwidth_tests\": true,\n"
+              << "    \"run_latency_sweep\": false\n"
               << "  }\n";
 }
 
@@ -112,6 +124,38 @@ bool spawn_agent(uint32_t agent_id, const std::map<std::string, std::string>& en
     // Parent process
     g_child_pids.push_back(pid);
     std::cout << "  Spawned agent " << agent_id << " (PID: " << pid << ") -> " << log_file << "\n";
+    return true;
+}
+
+bool spawn_agent_container(uint32_t agent_id, const std::map<std::string, std::string>& env_vars) {
+    // Compute agent IP: 172.30.0.{10 + agent_id}
+    std::string agent_ip = "172.30.0." + std::to_string(10 + agent_id);
+    std::string container_name = "topo-agent-" + std::to_string(agent_id);
+
+    // Build docker run command
+    std::string cmd = "docker run -d";
+    cmd += " --name " + container_name;
+    cmd += " --network " + g_harness_network;
+    cmd += " --ip " + agent_ip;
+
+    // Add environment variables
+    for (const auto& [key, value] : env_vars) {
+        cmd += " -e " + key + "=" + value;
+    }
+    cmd += " -e UCX_TLS=tcp,shm";
+
+    // Image and command
+    cmd += " " + g_harness_image + " agent";
+
+    // Execute docker run
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        std::cerr << "Failed to spawn agent container " << agent_id << "\n";
+        return false;
+    }
+
+    std::cout << "  Spawned agent " << agent_id << " container: " << container_name
+              << " (" << agent_ip << ")\n";
     return true;
 }
 
@@ -193,17 +237,40 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Determine agent binary path
-    if (agent_path.empty()) {
-        g_agent_binary_path = get_exe_dir(argv[0]) + "/agent";
-    } else {
-        g_agent_binary_path = agent_path;
+    // Check for harness mode (containerized deployment)
+    const char* harness_mode_env = std::getenv("HARNESS_MODE");
+    if (harness_mode_env && std::strcmp(harness_mode_env, "1") == 0) {
+        g_harness_mode = true;
+
+        const char* network_env = std::getenv("HARNESS_NETWORK");
+        const char* image_env = std::getenv("HARNESS_IMAGE");
+
+        if (!network_env || !image_env) {
+            std::cerr << "Error: HARNESS_MODE=1 requires HARNESS_NETWORK and HARNESS_IMAGE\n";
+            return 1;
+        }
+
+        g_harness_network = network_env;
+        g_harness_image = image_env;
+
+        std::cout << "Harness mode enabled\n";
+        std::cout << "  Network: " << g_harness_network << "\n";
+        std::cout << "  Image: " << g_harness_image << "\n";
     }
 
-    // Verify agent binary exists
-    if (access(g_agent_binary_path.c_str(), X_OK) != 0) {
-        std::cerr << "Error: Agent binary not found or not executable: " << g_agent_binary_path << "\n";
-        return 1;
+    // Determine agent binary path (only needed in non-harness mode)
+    if (!g_harness_mode) {
+        if (agent_path.empty()) {
+            g_agent_binary_path = get_exe_dir(argv[0]) + "/agent";
+        } else {
+            g_agent_binary_path = agent_path;
+        }
+
+        // Verify agent binary exists
+        if (access(g_agent_binary_path.c_str(), X_OK) != 0) {
+            std::cerr << "Error: Agent binary not found or not executable: " << g_agent_binary_path << "\n";
+            return 1;
+        }
     }
 
     // Set up signal handlers
@@ -242,19 +309,36 @@ int main(int argc, char* argv[]) {
               << std::dec << "\n";
     std::cout << "Buffer size: " << controller.buffer().size() << " bytes\n";
 
-    // Spawn agent processes
+    // Spawn agent processes or containers
     std::cout << "\nSpawning " << num_agents << " agents...\n";
-    std::cout << "Agent binary: " << g_agent_binary_path << "\n";
+    if (g_harness_mode) {
+        std::cout << "Mode: containerized (harness)\n";
+    } else {
+        std::cout << "Mode: local processes\n";
+        std::cout << "Agent binary: " << g_agent_binary_path << "\n";
+    }
+
     for (uint32_t i = 0; i < num_agents; ++i) {
         auto env_vars = controller.get_agent_env_vars(i);
-        if (!spawn_agent(i, env_vars)) {
+        bool success = g_harness_mode
+            ? spawn_agent_container(i, env_vars)
+            : spawn_agent(i, env_vars);
+
+        if (!success) {
             std::cerr << "Error: Failed to spawn agent " << i << "\n";
-            terminate_agents();
+            if (!g_harness_mode) {
+                terminate_agents();
+            }
             controller.shutdown();
             return 1;
         }
     }
-    std::cout << "All agents spawned. Logs in /tmp/agent_*.log\n\n";
+
+    if (g_harness_mode) {
+        std::cout << "All agent containers spawned.\n\n";
+    } else {
+        std::cout << "All agents spawned. Logs in /tmp/agent_*.log\n\n";
+    }
 
     // Wait for all agents to register
     std::cout << "Waiting for agents to register...\n";
@@ -281,7 +365,9 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            terminate_agents();
+            if (!g_harness_mode) {
+                terminate_agents();
+            }
             controller.shutdown();
             return 1;
         }
@@ -300,7 +386,9 @@ int main(int argc, char* argv[]) {
 
     if (g_shutdown_requested) {
         std::cout << "\nShutdown requested, exiting...\n";
-        terminate_agents();
+        if (!g_harness_mode) {
+            terminate_agents();
+        }
         controller.shutdown();
         return 0;
     }
@@ -313,7 +401,9 @@ int main(int argc, char* argv[]) {
     // Wait for all agents to complete peer discovery before sending commands
     if (!controller.wait_for_peer_discovery(std::chrono::seconds(timeout_sec))) {
         std::cerr << "Error: Timeout waiting for peer discovery\n";
-        terminate_agents();
+        if (!g_harness_mode) {
+            terminate_agents();
+        }
         controller.shutdown();
         return 1;
     }
@@ -370,6 +460,78 @@ int main(int argc, char* argv[]) {
             std::cout << "\n=== Latency Matrix (CSV) ===\n";
             controller.log_latency_matrix_csv(std::cout);
             std::cout << "=== End Latency Matrix ===\n";
+        }
+
+        // === Latency Sweep Tests (optional) ===
+        if (config.run_latency_sweep && !g_shutdown_requested) {
+            std::cout << "\n=== Executing Latency Sweep Tests ===\n";
+            std::cout << "Message sizes: " << config.latency_message_sizes.size() << " sizes (8B to 64KB)\n";
+            std::cout << "Iterations per size: " << config.latency_sweep_iterations << " (warmup: " << config.latency_sweep_warmup << ")\n";
+            test_num = 0;
+
+            // Test all unique pairs
+            for (uint32_t i = 0; i < num_agents && !g_shutdown_requested; ++i) {
+                for (uint32_t j = i + 1; j < num_agents && !g_shutdown_requested; ++j) {
+                    if (!controller.buffer().is_agent_registered(i) ||
+                        !controller.buffer().is_agent_registered(j)) {
+                        continue;
+                    }
+
+                    ++test_num;
+                    std::cout << "\n--- Latency Sweep " << test_num << ": " << i << " <-> " << j << " ---\n";
+
+                    // Sweep through message sizes
+                    for (uint64_t msg_size : config.latency_message_sizes) {
+                        if (g_shutdown_requested) break;
+
+                        // Validate message size fits in mailbox
+                        if (msg_size > nixl_topo::MAILBOX_SIZE - sizeof(nixl_topo::MailboxHeader)) {
+                            std::cerr << "  Skipping " << msg_size << " bytes: exceeds mailbox size\n";
+                            continue;
+                        }
+
+                        if (controller.issue_ping_pong_test(i, j, msg_size,
+                                                             config.latency_sweep_iterations,
+                                                             config.latency_sweep_warmup)) {
+                            if (controller.wait_for_results({i}, controller.command_seq(), result_timeout)) {
+                                const auto* result = controller.get_result(i);
+                                if (result) {
+                                    uint64_t avg_lat = nixl_topo::from_wire64(result->avg_latency_ns);
+
+                                    // Format message size for display
+                                    std::string size_str;
+                                    if (msg_size >= 1024) {
+                                        size_str = std::to_string(msg_size / 1024) + "K";
+                                    } else {
+                                        size_str = std::to_string(msg_size) + "B";
+                                    }
+
+                                    std::cout << "  " << size_str << ": " << avg_lat << " ns\n";
+
+                                    // Store detailed result
+                                    controller.store_latency_detailed_result(i, j, msg_size, *result);
+                                }
+                            } else {
+                                std::cerr << "  " << msg_size << "B: timeout\n";
+                            }
+                        } else {
+                            std::cerr << "  " << msg_size << "B: failed to issue\n";
+                        }
+                    }
+                }
+            }
+
+            std::cout << "\n=== Latency Sweep Complete ===\n";
+
+            // Write detailed latency CSV
+            std::ofstream lat_detailed_file(config.latency_detailed_csv_path);
+            if (lat_detailed_file.is_open()) {
+                controller.log_latency_detailed_csv(lat_detailed_file);
+                lat_detailed_file.close();
+                std::cout << "Latency sweep results written to: " << config.latency_detailed_csv_path << "\n";
+            } else {
+                std::cerr << "Error: Could not open output file: " << config.latency_detailed_csv_path << "\n";
+            }
         }
 
         // === Bandwidth Tests ===
@@ -493,7 +655,9 @@ int main(int argc, char* argv[]) {
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
     std::cout << "\nShutting down controller...\n";
-    terminate_agents();
+    if (!g_harness_mode) {
+        terminate_agents();
+    }
     controller.shutdown();
     std::cout << "Controller shutdown complete.\n";
 

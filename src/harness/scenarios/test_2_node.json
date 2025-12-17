@@ -1,0 +1,5 @@
+{
+  "name": "test-2-node",
+  "num_agents": 2,
+  "image": "nixl-topo-disc:latest"
+}
