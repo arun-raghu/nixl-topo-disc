@@ -360,10 +360,10 @@ TEST_F(TopologyTest, InterCluster_HiddenNodeTypes) {
     TopologyBuilder builder;
     auto graph = builder.build(matrix);
 
-    // Tier 1 should be NVSWITCH, Tier 2 should be TOR_SWITCH (physical nodes are tier 0)
+    // Tier 1 should be TIER0_SWITCH, Tier 2 should be TOR_SWITCH (physical nodes are tier 0)
     for (const auto& hn : graph.hidden_nodes()) {
         if (hn.tier == 1) {
-            EXPECT_EQ(hn.type, HiddenNodeType::NVSWITCH);
+            EXPECT_EQ(hn.type, HiddenNodeType::TIER0_SWITCH);
         } else if (hn.tier == 2) {
             EXPECT_EQ(hn.type, HiddenNodeType::TOR_SWITCH);
         }
@@ -456,8 +456,8 @@ TEST_F(TopologyTest, InterCluster_SingleClusterNoHigherTier) {
 
 TEST_F(TopologyTest, InterCluster_Tier3_SpineSwitch) {
     // hierarchical_8node.csv creates a 3-level hierarchy:
-    // - Nodes 0,1 and 2,3 cluster at 1000ns (2 tier-1 NVSWITCH)
-    // - Nodes 4,5 and 6,7 cluster at 1000ns (2 more tier-1 NVSWITCH)
+    // - Nodes 0,1 and 2,3 cluster at 1000ns (2 tier-1 TIER0_SWITCH)
+    // - Nodes 4,5 and 6,7 cluster at 1000ns (2 more tier-1 TIER0_SWITCH)
     // - {0,1,2,3} merge at 5000ns (1 tier-2 TOR_SWITCH)
     // - {4,5,6,7} merge at 5000ns (1 more tier-2 TOR_SWITCH)
     // - All merge at 20000ns (1 tier-3 SPINE_SWITCH)
@@ -481,12 +481,12 @@ TEST_F(TopologyTest, InterCluster_Tier3_SpineSwitch) {
     }
 
     // Should have nodes at tier 1, 2, and 3
-    EXPECT_EQ(nodes_by_tier[1], 4);  // 4 NVSWITCH (one per pair)
+    EXPECT_EQ(nodes_by_tier[1], 4);  // 4 TIER0_SWITCH (one per pair)
     EXPECT_EQ(nodes_by_tier[2], 2);  // 2 TOR_SWITCH (one per quad)
     EXPECT_EQ(nodes_by_tier[3], 1);  // 1 SPINE_SWITCH (connects all)
 
     // Verify types
-    EXPECT_EQ(type_by_tier[1], HiddenNodeType::NVSWITCH);
+    EXPECT_EQ(type_by_tier[1], HiddenNodeType::TIER0_SWITCH);
     EXPECT_EQ(type_by_tier[2], HiddenNodeType::TOR_SWITCH);
     EXPECT_EQ(type_by_tier[3], HiddenNodeType::SPINE_SWITCH);
 

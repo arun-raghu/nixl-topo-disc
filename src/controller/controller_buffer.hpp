@@ -12,7 +12,7 @@ constexpr size_t CONTROLLER_CMD_AREA_SIZE = 4096;  // 64 commands @ 64 bytes eac
 
 /// Manages the controller's shared buffer for agent registration and coordination.
 /// Layout:
-///   [BufferHeader][AgentSlots][Notifications][Results][CmdArea]
+///   [BufferHeader][AgentSlots][Results][CmdArea]
 class ControllerBuffer {
 public:
     ControllerBuffer();
@@ -54,10 +54,6 @@ public:
     AgentSlot* agent_slot(uint32_t agent_id);
     const AgentSlot* agent_slot(uint32_t agent_id) const;
 
-    /// Get pointer to agent notification slot.
-    Notification* notification_slot(uint32_t agent_id);
-    const Notification* notification_slot(uint32_t agent_id) const;
-
     /// Check if agent has populated its metadata slot.
     bool is_agent_registered(uint32_t agent_id) const;
 
@@ -79,7 +75,6 @@ private:
 
     // Cached offsets in host format (header is stored in wire format for RDMA)
     uint32_t agent_slots_offset_ = 0;
-    uint32_t notification_offset_ = 0;
     uint32_t result_offset_ = 0;
     uint32_t cmd_area_offset_ = 0;
 };

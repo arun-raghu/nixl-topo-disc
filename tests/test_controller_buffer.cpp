@@ -133,10 +133,10 @@ TEST(ControllerBufferTest, Header_OffsetsInWireFormat) {
 
     // Offsets should be positive values in wire format
     uint32_t agent_offset = from_wire32(buffer.header()->agent_slots_offset);
-    uint32_t notif_offset = from_wire32(buffer.header()->notification_offset);
+    uint32_t result_offset = from_wire32(buffer.header()->result_offset);
 
     EXPECT_GT(agent_offset, 0u);
-    EXPECT_GT(notif_offset, agent_offset);
+    EXPECT_GT(result_offset, agent_offset);
 }
 
 TEST(ControllerBufferTest, Header_BufferBaseAddr) {
@@ -227,43 +227,6 @@ TEST(ControllerBufferTest, AgentSlot_InitiallyNotPopulated) {
 
     for (uint32_t i = 0; i < 4; ++i) {
         EXPECT_FALSE(buffer.is_agent_registered(i));
-    }
-}
-
-// =============================================================================
-// NotificationSlot Tests
-// =============================================================================
-
-TEST(ControllerBufferTest, NotificationSlot_ValidIndex) {
-    ControllerBuffer buffer;
-    ASSERT_TRUE(buffer.allocate(4));
-
-    for (uint32_t i = 0; i < 4; ++i) {
-        EXPECT_NE(buffer.notification_slot(i), nullptr);
-    }
-}
-
-TEST(ControllerBufferTest, NotificationSlot_InvalidIndex) {
-    ControllerBuffer buffer;
-    ASSERT_TRUE(buffer.allocate(4));
-
-    EXPECT_EQ(buffer.notification_slot(4), nullptr);
-    EXPECT_EQ(buffer.notification_slot(100), nullptr);
-}
-
-TEST(ControllerBufferTest, NotificationSlot_NullWhenNotAllocated) {
-    ControllerBuffer buffer;
-    EXPECT_EQ(buffer.notification_slot(0), nullptr);
-}
-
-TEST(ControllerBufferTest, NotificationSlot_ProperSpacing) {
-    ControllerBuffer buffer;
-    ASSERT_TRUE(buffer.allocate(4));
-
-    for (uint32_t i = 0; i < 3; ++i) {
-        uintptr_t addr1 = reinterpret_cast<uintptr_t>(buffer.notification_slot(i));
-        uintptr_t addr2 = reinterpret_cast<uintptr_t>(buffer.notification_slot(i + 1));
-        EXPECT_EQ(addr2 - addr1, NOTIFICATION_SLOT_SIZE);
     }
 }
 
@@ -424,15 +387,15 @@ TEST(ControllerBufferTest, BufferLayout_AgentSlotsAfterHeader) {
     EXPECT_EQ(slot0_addr - header_addr, sizeof(BufferHeader));
 }
 
-TEST(ControllerBufferTest, BufferLayout_NotificationsAfterSlots) {
+TEST(ControllerBufferTest, BufferLayout_ResultsAfterSlots) {
     ControllerBuffer buffer;
     ASSERT_TRUE(buffer.allocate(4));
 
     uintptr_t last_slot_addr = reinterpret_cast<uintptr_t>(buffer.agent_slot(3));
-    uintptr_t first_notif_addr = reinterpret_cast<uintptr_t>(buffer.notification_slot(0));
+    uintptr_t first_result_addr = reinterpret_cast<uintptr_t>(buffer.result_slot(0));
 
-    // First notification slot should be after last agent slot
-    EXPECT_EQ(first_notif_addr - last_slot_addr, AGENT_SLOT_SIZE);
+    // First result slot should be after last agent slot
+    EXPECT_EQ(first_result_addr - last_slot_addr, AGENT_SLOT_SIZE);
 }
 
 TEST(ControllerBufferTest, BufferSize_MatchesExpected) {
@@ -441,7 +404,6 @@ TEST(ControllerBufferTest, BufferSize_MatchesExpected) {
 
     size_t expected_size = sizeof(BufferHeader) +
                           4 * AGENT_SLOT_SIZE +
-                          4 * NOTIFICATION_SLOT_SIZE +
                           4 * TEST_RESULT_SIZE +
                           CONTROLLER_CMD_AREA_SIZE;
 

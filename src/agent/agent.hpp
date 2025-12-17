@@ -129,7 +129,6 @@ private:
     // Controller buffer info (read from BufferHeader)
     uint64_t ctrl_buffer_base_addr_ = 0;  // Controller's buffer base address for RDMA
     uint32_t ctrl_agent_slots_offset_ = 0;
-    uint32_t ctrl_notification_offset_ = 0;
     uint32_t ctrl_result_offset_ = 0;     // Result region offset in controller buffer
 
     // Command tracking

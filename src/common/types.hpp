@@ -22,16 +22,6 @@ inline uint64_t from_wire64(uint64_t wire) { return be64toh(wire); }
 constexpr size_t AGENT_SLOT_SIZE = 4096;          // Metadata slot per agent
 constexpr size_t AGENT_SLOT_HEADER_SIZE = 24;     // Fixed header in AgentSlot
 constexpr size_t MAX_METADATA_BLOB_SIZE = AGENT_SLOT_SIZE - AGENT_SLOT_HEADER_SIZE;  // 4072
-constexpr size_t NOTIFICATION_SLOT_SIZE = 64;     // Notification slot per agent
-
-// =============================================================================
-// Notification Types
-// =============================================================================
-
-enum class NotificationType : uint32_t {
-    NONE = 0,
-    RENDEZVOUS_COMPLETE = 1,
-};
 
 // =============================================================================
 // Command Types (for test commands)
@@ -76,7 +66,6 @@ struct BufferHeader {
     uint32_t version;               // Buffer format version
     uint32_t num_agents;            // Total number of agents
     uint32_t agent_slots_offset;    // Offset to agent metadata region
-    uint32_t notification_offset;   // Offset to notification region
     uint32_t result_offset;         // Offset to result region (VERSION 2+)
     uint64_t ready_flag;            // Set to 1 when rendezvous complete
     uint64_t buffer_base_addr;      // Absolute address of this buffer (for RDMA)
@@ -90,7 +79,6 @@ struct BufferHeader {
         version = from_wire32(version);
         num_agents = from_wire32(num_agents);
         agent_slots_offset = from_wire32(agent_slots_offset);
-        notification_offset = from_wire32(notification_offset);
         result_offset = from_wire32(result_offset);
         ready_flag = from_wire64(ready_flag);
         buffer_base_addr = from_wire64(buffer_base_addr);
@@ -102,7 +90,6 @@ struct BufferHeader {
         version = to_wire32(version);
         num_agents = to_wire32(num_agents);
         agent_slots_offset = to_wire32(agent_slots_offset);
-        notification_offset = to_wire32(notification_offset);
         result_offset = to_wire32(result_offset);
         ready_flag = to_wire64(ready_flag);
         buffer_base_addr = to_wire64(buffer_base_addr);
@@ -149,25 +136,6 @@ struct AgentSlot {
 
 static_assert(sizeof(AgentSlot) == AGENT_SLOT_HEADER_SIZE,
               "AgentSlot size must match AGENT_SLOT_HEADER_SIZE");
-
-// =============================================================================
-// Notification Slot
-// =============================================================================
-
-struct Notification {
-    uint64_t sequence;              // Monotonically increasing sequence number
-    NotificationType type;          // Type of notification
-    uint32_t source_id;             // Source agent/controller ID
-    uint64_t timestamp_ns;          // Timestamp in nanoseconds (optional)
-    uint64_t payload;               // Type-specific payload
-    uint8_t padding[32];            // Pad to NOTIFICATION_SLOT_SIZE
-
-    Notification() : sequence(0), type(NotificationType::NONE),
-                     source_id(0), timestamp_ns(0), payload(0), padding{} {}
-};
-
-static_assert(sizeof(Notification) == NOTIFICATION_SLOT_SIZE,
-              "Notification must equal NOTIFICATION_SLOT_SIZE");
 
 // =============================================================================
 // Test Command (written by controller to agent's command inbox)

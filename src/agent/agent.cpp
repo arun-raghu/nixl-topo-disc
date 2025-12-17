@@ -124,7 +124,6 @@ bool Agent::initialize() {
 
     // Store offsets
     ctrl_agent_slots_offset_ = header.agent_slots_offset;
-    ctrl_notification_offset_ = header.notification_offset;
     ctrl_result_offset_ = header.result_offset;
 
     initialized_ = true;
@@ -444,7 +443,6 @@ void Agent::shutdown() {
     controller_name_.clear();
     ctrl_buffer_base_addr_ = 0;
     ctrl_agent_slots_offset_ = 0;
-    ctrl_notification_offset_ = 0;
     ctrl_result_offset_ = 0;
     last_command_seq_ = 0;
     initialized_ = false;

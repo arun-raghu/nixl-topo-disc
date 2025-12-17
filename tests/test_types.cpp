@@ -98,7 +98,7 @@ TEST(BufferHeaderTest, ToWire_ConvertAllFields) {
     header.version = BufferHeader::VERSION;
     header.num_agents = 4;
     header.agent_slots_offset = 64;
-    header.notification_offset = 1024;
+    header.result_offset = 1024;
     header.ready_flag = 1;
     header.buffer_base_addr = 0x7FFF12340000;
 
@@ -109,7 +109,7 @@ TEST(BufferHeaderTest, ToWire_ConvertAllFields) {
     EXPECT_EQ(header.version, to_wire32(BufferHeader::VERSION));
     EXPECT_EQ(header.num_agents, to_wire32(4));
     EXPECT_EQ(header.agent_slots_offset, to_wire32(64));
-    EXPECT_EQ(header.notification_offset, to_wire32(1024));
+    EXPECT_EQ(header.result_offset, to_wire32(1024));
     EXPECT_EQ(header.ready_flag, to_wire64(1));
     EXPECT_EQ(header.buffer_base_addr, to_wire64(0x7FFF12340000));
 }
@@ -121,7 +121,7 @@ TEST(BufferHeaderTest, FromWire_ConvertAllFields) {
     header.version = to_wire32(BufferHeader::VERSION);
     header.num_agents = to_wire32(8);
     header.agent_slots_offset = to_wire32(128);
-    header.notification_offset = to_wire32(2048);
+    header.result_offset = to_wire32(2048);
     header.ready_flag = to_wire64(1);
     header.buffer_base_addr = to_wire64(0xABCD00001234);
 
@@ -132,7 +132,7 @@ TEST(BufferHeaderTest, FromWire_ConvertAllFields) {
     EXPECT_EQ(header.version, BufferHeader::VERSION);
     EXPECT_EQ(header.num_agents, 8u);
     EXPECT_EQ(header.agent_slots_offset, 128u);
-    EXPECT_EQ(header.notification_offset, 2048u);
+    EXPECT_EQ(header.result_offset, 2048u);
     EXPECT_EQ(header.ready_flag, 1u);
     EXPECT_EQ(header.buffer_base_addr, 0xABCD00001234ULL);
 }
@@ -143,7 +143,7 @@ TEST(BufferHeaderTest, ToWire_FromWire_RoundTrip) {
     original.version = BufferHeader::VERSION;
     original.num_agents = 16;
     original.agent_slots_offset = 256;
-    original.notification_offset = 4096;
+    original.result_offset = 4096;
     original.ready_flag = 0;
     original.buffer_base_addr = 0x1234567890ABCDEF;
 
@@ -155,7 +155,7 @@ TEST(BufferHeaderTest, ToWire_FromWire_RoundTrip) {
     EXPECT_EQ(converted.version, original.version);
     EXPECT_EQ(converted.num_agents, original.num_agents);
     EXPECT_EQ(converted.agent_slots_offset, original.agent_slots_offset);
-    EXPECT_EQ(converted.notification_offset, original.notification_offset);
+    EXPECT_EQ(converted.result_offset, original.result_offset);
     EXPECT_EQ(converted.ready_flag, original.ready_flag);
     EXPECT_EQ(converted.buffer_base_addr, original.buffer_base_addr);
 }
@@ -246,43 +246,6 @@ TEST(AgentSlotTest, SlotSize_AccommodatesMetadata) {
 }
 
 // =============================================================================
-// Notification Tests
-// =============================================================================
-
-TEST(NotificationTest, DefaultConstruction) {
-    Notification notif;
-    EXPECT_EQ(notif.sequence, 0u);
-    EXPECT_EQ(notif.type, NotificationType::NONE);
-    EXPECT_EQ(notif.source_id, 0u);
-    EXPECT_EQ(notif.timestamp_ns, 0u);
-    EXPECT_EQ(notif.payload, 0u);
-}
-
-TEST(NotificationTest, Size_MatchesSlotSize) {
-    EXPECT_EQ(sizeof(Notification), NOTIFICATION_SLOT_SIZE);
-}
-
-TEST(NotificationTest, NotificationType_Values) {
-    EXPECT_EQ(static_cast<uint32_t>(NotificationType::NONE), 0u);
-    EXPECT_EQ(static_cast<uint32_t>(NotificationType::RENDEZVOUS_COMPLETE), 1u);
-}
-
-TEST(NotificationTest, CanSetFields) {
-    Notification notif;
-    notif.sequence = 42;
-    notif.type = NotificationType::RENDEZVOUS_COMPLETE;
-    notif.source_id = 5;
-    notif.timestamp_ns = 1234567890;
-    notif.payload = 0xDEADBEEF;
-
-    EXPECT_EQ(notif.sequence, 42u);
-    EXPECT_EQ(notif.type, NotificationType::RENDEZVOUS_COMPLETE);
-    EXPECT_EQ(notif.source_id, 5u);
-    EXPECT_EQ(notif.timestamp_ns, 1234567890u);
-    EXPECT_EQ(notif.payload, 0xDEADBEEFu);
-}
-
-// =============================================================================
 // Constants Tests
 // =============================================================================
 
@@ -295,7 +258,6 @@ TEST(ConstantsTest, BufferSizes_AreReasonable) {
 
 TEST(ConstantsTest, SlotSizes_AreReasonable) {
     EXPECT_GT(AGENT_SLOT_SIZE, 0u);
-    EXPECT_GT(NOTIFICATION_SLOT_SIZE, 0u);
 
     // Slot size should be larger than header
     EXPECT_GT(AGENT_SLOT_SIZE, AGENT_SLOT_HEADER_SIZE);
