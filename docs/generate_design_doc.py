@@ -8,7 +8,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image, KeepTogether
 from reportlab.graphics.shapes import Drawing, Rect, String, Line, Polygon
 from reportlab.graphics import renderPDF
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -164,17 +164,11 @@ def create_buffer_layout_diagram():
     ax.add_patch(status)
     ax.text(6.2, 2.85, 'Agent Status Slots [0..N-1]', ha='center', va='center', fontsize=8)
 
-    # Notification region
-    notify = FancyBboxPatch((0.7, 1.7), 7.6, 0.6, boxstyle="square",
-                             facecolor='#DDA0DD', edgecolor='black', linewidth=1)
-    ax.add_patch(notify)
-    ax.text(4.5, 2.0, 'NOTIFICATION SLOTS [0..N-1]', ha='center', va='center', fontsize=9, fontweight='bold')
-
     # Results region
-    results = FancyBboxPatch((0.7, 0.7), 7.6, 0.8, boxstyle="square",
+    results = FancyBboxPatch((0.7, 0.7), 7.6, 1.4, boxstyle="square",
                               facecolor='#F0E68C', edgecolor='black', linewidth=1)
     ax.add_patch(results)
-    ax.text(4.5, 1.1, 'RESULTS REGION (64KB per agent)', ha='center', va='center', fontsize=9, fontweight='bold')
+    ax.text(4.5, 1.4, 'RESULTS REGION (128 bytes per agent)', ha='center', va='center', fontsize=9, fontweight='bold')
 
     # === RIGHT SIDE: Write ownership arrows and labels ===
     arrow_x = 8.5
@@ -210,20 +204,12 @@ def create_buffer_layout_diagram():
     ax.text(label_x + 0.6, 2.25, '(status updates)', ha='left', va='center',
             fontsize=7, color='#50C878')
 
-    # Notification - Controller writes
-    ax.annotate('', xy=(arrow_x, 2.0), xytext=(arrow_x + 0.5, 2.0),
-                arrowprops=dict(arrowstyle='->', color='#4A90D9', lw=2))
-    ax.text(label_x + 0.6, 2.0, 'Controller writes', ha='left', va='center',
-            fontsize=8, fontweight='bold', color='#4A90D9')
-    ax.text(label_x + 0.6, 1.75, '(wake agents)', ha='left', va='center',
-            fontsize=7, color='#4A90D9')
-
     # Results - Agents write
-    ax.annotate('', xy=(arrow_x, 1.1), xytext=(arrow_x + 0.5, 1.1),
+    ax.annotate('', xy=(arrow_x, 1.4), xytext=(arrow_x + 0.5, 1.4),
                 arrowprops=dict(arrowstyle='->', color='#50C878', lw=2))
-    ax.text(label_x + 0.6, 1.1, 'Agents write', ha='left', va='center',
+    ax.text(label_x + 0.6, 1.4, 'Agents write', ha='left', va='center',
             fontsize=8, fontweight='bold', color='#50C878')
-    ax.text(label_x + 0.6, 0.85, '(test results)', ha='left', va='center',
+    ax.text(label_x + 0.6, 1.15, '(test results)', ha='left', va='center',
             fontsize=7, color='#50C878')
 
     # Legend at bottom
@@ -231,6 +217,62 @@ def create_buffer_layout_diagram():
     ax.text(1.0, 0.2, 'Controller', fontsize=7, va='center')
     ax.add_patch(FancyBboxPatch((2.2, 0.1), 0.3, 0.2, facecolor='#50C878'))
     ax.text(2.7, 0.2, 'Agents', fontsize=7, va='center')
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
+
+def create_agent_buffer_layout_diagram():
+    """Create agent buffer layout diagram"""
+    fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    ax.set_xlim(0, 12)
+    ax.set_ylim(0, 5)
+    ax.axis('off')
+
+    # Main buffer outline
+    main = FancyBboxPatch((0.5, 0.5), 9, 4, boxstyle="round,pad=0.02",
+                           facecolor='white', edgecolor='black', linewidth=2)
+    ax.add_patch(main)
+    ax.text(5, 4.7, 'Agent Buffer (256 MB NIXL Registered Memory)',
+            ha='center', va='center', fontsize=12, fontweight='bold')
+
+    # Transfer slots (largest region)
+    transfer = FancyBboxPatch((0.7, 1.2), 8.6, 2.8, boxstyle="square",
+                               facecolor='#90EE90', edgecolor='black', linewidth=1)
+    ax.add_patch(transfer)
+    ax.text(5, 2.9, 'TRANSFER SLOTS', ha='center', va='center', fontsize=11, fontweight='bold')
+    ax.text(5, 2.4, '~256 MB - 8KB', ha='center', va='center', fontsize=9)
+    ax.text(5, 2.0, '64 slots x 4MB max (for bandwidth tests)', ha='center', va='center', fontsize=8)
+    ax.text(5, 1.6, 'Peer agents write data here via RDMA', ha='center', va='center', fontsize=8, style='italic')
+
+    # Command inbox
+    cmd = FancyBboxPatch((0.7, 0.7), 4.2, 0.4, boxstyle="square",
+                          facecolor='#FFD700', edgecolor='black', linewidth=1)
+    ax.add_patch(cmd)
+    ax.text(2.8, 0.9, 'COMMAND INBOX (4 KB)', ha='center', va='center', fontsize=9, fontweight='bold')
+
+    # Mailbox
+    mailbox = FancyBboxPatch((5.1, 0.7), 4.2, 0.4, boxstyle="square",
+                              facecolor='#87CEEB', edgecolor='black', linewidth=1)
+    ax.add_patch(mailbox)
+    ax.text(7.2, 0.9, 'MAILBOX (4 KB)', ha='center', va='center', fontsize=9, fontweight='bold')
+
+    # Right side: Write ownership
+    ax.text(10, 3.5, 'Writers:', fontsize=9, fontweight='bold')
+    ax.add_patch(FancyBboxPatch((10, 3.0), 0.3, 0.25, facecolor='#90EE90'))
+    ax.text(10.5, 3.1, 'Peer agents', fontsize=8, va='center')
+    ax.add_patch(FancyBboxPatch((10, 2.5), 0.3, 0.25, facecolor='#FFD700'))
+    ax.text(10.5, 2.6, 'Controller', fontsize=8, va='center')
+    ax.add_patch(FancyBboxPatch((10, 2.0), 0.3, 0.25, facecolor='#87CEEB'))
+    ax.text(10.5, 2.1, 'Peer (ping-pong)', fontsize=8, va='center')
+
+    # Size annotations
+    ax.text(5, 0.3, 'Total: 256 MB | Transfer: window_size x msg_size | Cmd+Mailbox: 8 KB',
+            ha='center', fontsize=8, color='gray')
 
     plt.tight_layout()
     buf = io.BytesIO()
@@ -426,6 +468,246 @@ def create_sequence_diagram_test():
     return buf
 
 
+def create_sequence_ping_pong():
+    """Create ping-pong latency test sequence diagram between two agents"""
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 8)
+    ax.axis('off')
+
+    ax.text(5, 7.7, 'Ping-Pong Latency Test (Agent-to-Agent)', ha='center', fontsize=14, fontweight='bold')
+
+    # Actor labels
+    actors = [('Controller', 1.5), ('Agent A\n(Initiator)', 5), ('Agent B\n(Responder)', 8.5)]
+    for name, x in actors:
+        ax.text(x, 7.2, name, ha='center', fontsize=10, fontweight='bold')
+        ax.plot([x, x], [0.5, 6.8], 'k--', linewidth=1, alpha=0.5)
+
+    y = 6.3
+    step = 0.65
+
+    # 1. Controller sends command to both
+    ax.text(0.2, y, '1', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(5, y), xytext=(1.5, y),
+                arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+    ax.annotate('', xy=(8.5, y-0.1), xytext=(1.5, y-0.1),
+                arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+    ax.text(3.25, y+0.2, 'RDMA Write: TestCommand', fontsize=7, color='red')
+
+    # 2. Controller notifies both
+    y -= step
+    ax.text(0.2, y, '2', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(5, y), xytext=(1.5, y),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=1.5))
+    ax.annotate('', xy=(8.5, y), xytext=(1.5, y),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=1.5))
+    ax.text(4, y+0.2, 'NIXL genNotif()', fontsize=7, color='orange')
+
+    # Ping-pong loop box
+    y -= step * 0.5
+    ax.add_patch(FancyBboxPatch((4.2, y-2.2), 5, 2.4, boxstyle="round,pad=0.02",
+                                 facecolor='#FFFACD', edgecolor='orange', linewidth=2))
+    ax.text(6.7, y, 'loop [iterations]', fontsize=8, fontweight='bold', color='orange')
+
+    # 3. Ping: A writes to B's mailbox
+    y -= step
+    ax.text(0.2, y, '3', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(8.5, y), xytext=(5, y),
+                arrowprops=dict(arrowstyle='->', color='purple', lw=1.5))
+    ax.text(6.75, y+0.18, 'RDMA Write: ping (seq++)', fontsize=7, color='purple')
+
+    # 4. B polls, sees seq increment
+    y -= step
+    ax.text(0.2, y, '4', fontsize=9, fontweight='bold', color='blue')
+    ax.add_patch(FancyBboxPatch((7.8, y-0.15), 1.4, 0.35, facecolor='#98FB98'))
+    ax.text(8.5, y, 'Poll mailbox', ha='center', fontsize=8)
+
+    # 5. Pong: B writes to A's mailbox
+    y -= step
+    ax.text(0.2, y, '5', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(5, y), xytext=(8.5, y),
+                arrowprops=dict(arrowstyle='->', color='purple', lw=1.5))
+    ax.text(6.75, y+0.18, 'RDMA Write: pong (seq++)', fontsize=7, color='purple')
+
+    # 6. A polls, measures RTT
+    y -= step
+    ax.text(0.2, y, '6', fontsize=9, fontweight='bold', color='blue')
+    ax.add_patch(FancyBboxPatch((4.3, y-0.15), 1.4, 0.35, facecolor='#98FB98'))
+    ax.text(5, y, 'Measure RTT', ha='center', fontsize=8)
+
+    # 7. A writes results to controller
+    y -= step * 1.3
+    ax.text(0.2, y, '7', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(1.5, y), xytext=(5, y),
+                arrowprops=dict(arrowstyle='->', color='blue', lw=1.5))
+    ax.text(3.25, y+0.18, 'RDMA Write: TestResult', fontsize=7, color='blue')
+
+    # Legend
+    ax.text(0.3, 0.3, 'Legend:', fontsize=8, fontweight='bold')
+    ax.annotate('', xy=(1.5, 0.3), xytext=(1, 0.3),
+                arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+    ax.text(1.7, 0.3, 'Command', fontsize=7)
+    ax.annotate('', xy=(3.2, 0.3), xytext=(2.7, 0.3),
+                arrowprops=dict(arrowstyle='->', color='purple', lw=1.5))
+    ax.text(3.4, 0.3, 'Ping-Pong', fontsize=7)
+    ax.annotate('', xy=(5, 0.3), xytext=(4.5, 0.3),
+                arrowprops=dict(arrowstyle='->', color='blue', lw=1.5))
+    ax.text(5.2, 0.3, 'Result', fontsize=7)
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
+
+def create_sequence_bandwidth():
+    """Create bandwidth test sequence diagram between two agents"""
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 8)
+    ax.axis('off')
+
+    ax.text(5, 7.7, 'Bandwidth Test (Agent-to-Agent)', ha='center', fontsize=14, fontweight='bold')
+
+    # Actor labels
+    actors = [('Controller', 1.5), ('Agent A\n(Sender)', 5), ('Agent B\n(Receiver)', 8.5)]
+    for name, x in actors:
+        ax.text(x, 7.2, name, ha='center', fontsize=10, fontweight='bold')
+        ax.plot([x, x], [0.5, 6.8], 'k--', linewidth=1, alpha=0.5)
+
+    y = 6.3
+    step = 0.7
+
+    # 1. Controller sends BANDWIDTH command
+    ax.text(0.2, y, '1', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(5, y), xytext=(1.5, y),
+                arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+    ax.annotate('', xy=(8.5, y-0.1), xytext=(1.5, y-0.1),
+                arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+    ax.text(3.25, y+0.2, 'RDMA: BANDWIDTH cmd', fontsize=7, color='red')
+
+    # Window transfer box
+    y -= step
+    ax.add_patch(FancyBboxPatch((4.2, y-2.0), 5, 2.2, boxstyle="round,pad=0.02",
+                                 facecolor='#E6F3FF', edgecolor='blue', linewidth=2))
+    ax.text(6.7, y, 'loop [window_size outstanding]', fontsize=8, fontweight='bold', color='blue')
+
+    # 2. A sends window_size transfers
+    y -= step * 0.7
+    ax.text(0.2, y, '2', fontsize=9, fontweight='bold', color='blue')
+    for i in range(3):
+        ax.annotate('', xy=(8.5, y - i*0.25), xytext=(5, y - i*0.25),
+                    arrowprops=dict(arrowstyle='->', color='purple', lw=1, alpha=0.7))
+    ax.text(6.75, y+0.2, 'RDMA Write: data[0..window]', fontsize=7, color='purple')
+
+    # 3. Wait for completion
+    y -= step * 1.2
+    ax.text(0.2, y, '3', fontsize=9, fontweight='bold', color='blue')
+    ax.add_patch(FancyBboxPatch((4.3, y-0.15), 1.4, 0.35, facecolor='#98FB98'))
+    ax.text(5, y, 'Wait ACKs', ha='center', fontsize=8)
+
+    # 4. Next batch
+    y -= step * 0.8
+    ax.text(0.2, y, '4', fontsize=9, fontweight='bold', color='blue')
+    ax.text(6.7, y, '... repeat for iterations ...', fontsize=8, style='italic')
+
+    # 5. Calculate throughput
+    y -= step
+    ax.text(0.2, y, '5', fontsize=9, fontweight='bold', color='blue')
+    ax.add_patch(FancyBboxPatch((4.3, y-0.15), 1.4, 0.35, facecolor='#FFD700'))
+    ax.text(5, y, 'Calc BW', ha='center', fontsize=8)
+
+    # 6. Write results
+    y -= step
+    ax.text(0.2, y, '6', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(1.5, y), xytext=(5, y),
+                arrowprops=dict(arrowstyle='->', color='blue', lw=1.5))
+    ax.text(3.25, y+0.18, 'RDMA: TestResult (bandwidth_mbps)', fontsize=7, color='blue')
+
+    # Params note
+    ax.text(0.3, 0.5, 'Params: msg_size (1K-4M), iterations, window_size', fontsize=8, color='gray')
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
+
+def create_sequence_peer_discovery():
+    """Create peer discovery sequence diagram"""
+    fig, ax = plt.subplots(1, 1, figsize=(10, 5.5))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 7)
+    ax.axis('off')
+
+    ax.text(5, 6.7, 'Peer Discovery (After Rendezvous)', ha='center', fontsize=14, fontweight='bold')
+
+    # Actor labels
+    actors = [('Controller', 2), ('Agent 0', 5), ('Agent 1', 8)]
+    for name, x in actors:
+        ax.text(x, 6.2, name, ha='center', fontsize=10, fontweight='bold')
+        ax.plot([x, x], [0.8, 6], 'k--', linewidth=1, alpha=0.5)
+
+    y = 5.5
+    step = 0.75
+
+    # 1. Controller signals rendezvous complete
+    ax.text(0.2, y, '1', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(5, y), xytext=(2, y),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=1.5))
+    ax.annotate('', xy=(8, y), xytext=(2, y),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=1.5))
+    ax.text(4.5, y+0.2, 'NIXL Notify: RENDEZVOUS_COMPLETE', fontsize=7, color='orange')
+
+    # 2. Agent 0 reads controller buffer to get peer info
+    y -= step
+    ax.text(0.2, y, '2', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(5, y), xytext=(2, y),
+                arrowprops=dict(arrowstyle='<-', color='green', lw=1.5))
+    ax.text(3.5, y+0.2, 'RDMA Read: Agent slots', fontsize=7, color='green')
+
+    # 3. Agent 0 loads peer metadata into NIXL
+    y -= step
+    ax.text(0.2, y, '3', fontsize=9, fontweight='bold', color='blue')
+    ax.add_patch(FancyBboxPatch((4.3, y-0.15), 1.4, 0.35, facecolor='#B8D4E8'))
+    ax.text(5, y, 'loadRemoteMD()', ha='center', fontsize=8)
+
+    # 4. Agent 0 notifies controller it's ready
+    y -= step
+    ax.text(0.2, y, '4', fontsize=9, fontweight='bold', color='blue')
+    ax.annotate('', xy=(2, y), xytext=(5, y),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=1.5))
+    ax.text(3.5, y+0.2, 'NIXL Notify: PEER_DISCOVERY_COMPLETE', fontsize=7, color='orange')
+
+    # 5. Agent 1 does the same
+    y -= step
+    ax.text(0.2, y, '5', fontsize=9, fontweight='bold', color='blue')
+    ax.add_patch(FancyBboxPatch((7.3, y-0.15), 1.4, 0.35, facecolor='#B8D4E8'))
+    ax.text(8, y, 'loadRemoteMD()', ha='center', fontsize=8)
+    ax.annotate('', xy=(2, y-0.25), xytext=(8, y-0.25),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=1.5))
+
+    # 6. Controller waits for all, then starts tests
+    y -= step
+    ax.text(0.2, y, '6', fontsize=9, fontweight='bold', color='blue')
+    ax.add_patch(FancyBboxPatch((1.3, y-0.15), 1.4, 0.35, facecolor='#FFD700'))
+    ax.text(2, y, 'Start tests', ha='center', fontsize=8)
+
+    # Note about peer connectivity
+    ax.text(0.3, 1.0, 'After discovery: agents can RDMA directly to each other\'s buffers', fontsize=8, color='gray')
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
+
 def create_test_phases_diagram():
     """Create test phases overview diagram"""
     fig, ax = plt.subplots(1, 1, figsize=(10, 5))
@@ -441,7 +723,7 @@ def create_test_phases_diagram():
     ax.add_patch(phase1)
     ax.text(1.9, 5, 'PHASE 1', ha='center', fontsize=11, fontweight='bold')
     ax.text(1.9, 4.5, 'PAIRWISE_LATENCY', ha='center', fontsize=9)
-    ax.text(1.9, 4.1, '8-byte ping-pong', ha='center', fontsize=8)
+    ax.text(1.9, 4.1, '64-byte ping-pong', ha='center', fontsize=8)
     ax.text(1.9, 3.7, '~Minutes', ha='center', fontsize=8, style='italic')
 
     # Arrow
@@ -461,9 +743,10 @@ def create_test_phases_diagram():
                              facecolor='#FFD700', edgecolor='black', linewidth=2)
     ax.add_patch(phase2)
     ax.text(1.9, 2.7, 'PHASE 2', ha='center', fontsize=11, fontweight='bold')
-    ax.text(1.9, 2.2, 'BANDWIDTH', ha='center', fontsize=9)
-    ax.text(1.9, 1.85, 'BIDIRECTIONAL', ha='center', fontsize=9)
-    ax.text(1.9, 1.45, '~30-60 min', ha='center', fontsize=8, style='italic')
+    ax.text(1.9, 2.3, 'BANDWIDTH SWEEP', ha='center', fontsize=9)
+    ax.text(1.9, 1.95, '1K-4M bidirectional', ha='center', fontsize=8)
+    ax.text(1.9, 1.6, '7 msg sizes per pair', ha='center', fontsize=7)
+    ax.text(1.9, 1.35, '~30-60 min', ha='center', fontsize=8, style='italic')
 
     # Arrow
     ax.annotate('', xy=(3.5, 2.1), xytext=(3.3, 2.1),
@@ -685,57 +968,245 @@ def create_topology_example():
 
 
 def create_test_harness_diagram():
-    """Create test harness deployment diagram"""
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 7)
+    """Create test harness deployment diagram with tc network emulation"""
+    fig, ax = plt.subplots(1, 1, figsize=(11, 7))
+    ax.set_xlim(0, 11)
+    ax.set_ylim(0, 8)
     ax.axis('off')
 
-    ax.text(5, 6.7, 'Test Harness: Container Deployment', ha='center', fontsize=14, fontweight='bold')
+    ax.text(5.5, 7.7, 'Test Harness: TC Network Emulation', ha='center', fontsize=14, fontweight='bold')
 
-    # Docker/K8s environment
-    env = FancyBboxPatch((0.3, 0.3), 9.4, 6, boxstyle="round,pad=0.02",
+    # Docker environment
+    env = FancyBboxPatch((0.3, 1.8), 10.4, 5.6, boxstyle="round,pad=0.02",
                           facecolor='#F5F5F5', edgecolor='gray', linewidth=2, linestyle='--')
     ax.add_patch(env)
-    ax.text(5, 6.1, 'Container Environment (Docker / Kubernetes)', ha='center', fontsize=10)
+    ax.text(5.5, 7.2, 'Docker Network (harness-net: 172.30.0.0/16)', ha='center', fontsize=10)
+
+    # Harness (external)
+    harness = FancyBboxPatch((0.3, 0.3), 2.5, 1.2, boxstyle="round,pad=0.05",
+                              facecolor='#9B59B6', edgecolor='black', linewidth=2)
+    ax.add_patch(harness)
+    ax.text(1.55, 1.05, 'Harness', ha='center', fontsize=10, fontweight='bold', color='white')
+    ax.text(1.55, 0.7, 'tc_manager', ha='center', fontsize=8, color='white')
+    ax.text(1.55, 0.45, 'result_collector', ha='center', fontsize=7, color='white')
 
     # Controller container
-    ctrl = FancyBboxPatch((3.5, 4.5), 3, 1.2, boxstyle="round,pad=0.05",
+    ctrl = FancyBboxPatch((4, 5.8), 3, 1.2, boxstyle="round,pad=0.05",
                            facecolor='#4A90D9', edgecolor='black', linewidth=2)
     ax.add_patch(ctrl)
-    ax.text(5, 5.3, 'Controller Container', ha='center', fontsize=10, fontweight='bold', color='white')
-    ax.text(5, 4.9, 'hostNetwork: true', ha='center', fontsize=8, color='white')
-    ax.text(5, 4.6, 'privileged: true', ha='center', fontsize=8, color='white')
+    ax.text(5.5, 6.55, 'Controller', ha='center', fontsize=10, fontweight='bold', color='white')
+    ax.text(5.5, 6.2, '172.30.0.2', ha='center', fontsize=8, color='white')
+    ax.text(5.5, 5.9, '/output mounted', ha='center', fontsize=7, color='white')
 
-    # Agent containers
-    positions = [(0.5, 2.5), (2.5, 2.5), (4.5, 2.5), (6.5, 2.5)]
-    for i, (x, y) in enumerate(positions):
-        agent = FancyBboxPatch((x, y), 1.8, 1.3, boxstyle="round,pad=0.05",
-                                facecolor='#50C878', edgecolor='black', linewidth=2)
+    # Rack 0 box
+    rack0 = FancyBboxPatch((0.5, 2.2), 4.5, 3.2, boxstyle="round,pad=0.02",
+                            facecolor='#E8F5E9', edgecolor='#4CAF50', linewidth=2)
+    ax.add_patch(rack0)
+    ax.text(2.75, 5.2, 'Tier 0 (Rack 0)', ha='center', fontsize=9, fontweight='bold', color='#2E7D32')
+    ax.text(2.75, 4.9, 'intra_tier: 100us', ha='center', fontsize=8, color='#2E7D32')
+
+    # Rack 0 agents
+    for i, x in enumerate([0.7, 2.5]):
+        agent = FancyBboxPatch((x, 2.5), 1.6, 1.8, boxstyle="round,pad=0.05",
+                                facecolor='#50C878', edgecolor='black', linewidth=1.5)
         ax.add_patch(agent)
-        ax.text(x+0.9, y+0.95, f'Agent {i}', ha='center', fontsize=9, fontweight='bold', color='white')
-        ax.text(x+0.9, y+0.55, 'Container', ha='center', fontsize=8, color='white')
-        ax.text(x+0.9, y+0.25, f'AGENT_ID={i}', ha='center', fontsize=7, color='white')
+        ax.text(x+0.8, 4.0, f'Agent {i}', ha='center', fontsize=9, fontweight='bold', color='white')
+        ax.text(x+0.8, 3.6, f'172.30.0.{10+i}', ha='center', fontsize=7, color='white')
+        ax.text(x+0.8, 3.2, 'tc qdisc:', ha='center', fontsize=7, color='white')
+        ax.text(x+0.8, 2.85, 'netem delay', ha='center', fontsize=6, color='white')
 
-    # More agents
-    ax.text(9, 3.1, '...', fontsize=18, fontweight='bold')
+    # Rack 1 box
+    rack1 = FancyBboxPatch((5.5, 2.2), 4.5, 3.2, boxstyle="round,pad=0.02",
+                            facecolor='#FFF3E0', edgecolor='#FF9800', linewidth=2)
+    ax.add_patch(rack1)
+    ax.text(7.75, 5.2, 'Tier 1 (Rack 1)', ha='center', fontsize=9, fontweight='bold', color='#E65100')
+    ax.text(7.75, 4.9, 'intra_tier: 100us', ha='center', fontsize=8, color='#E65100')
 
-    # RDMA/Network layer
-    rdma = FancyBboxPatch((0.5, 1.2), 9, 0.8, boxstyle="round,pad=0.02",
-                           facecolor='#FF6B6B', edgecolor='black', linewidth=1.5)
-    ax.add_patch(rdma)
-    ax.text(5, 1.6, 'Host Network + RDMA Devices (/dev/infiniband)', ha='center', fontsize=10, fontweight='bold', color='white')
+    # Rack 1 agents
+    for i, x in enumerate([5.7, 7.5]):
+        agent = FancyBboxPatch((x, 2.5), 1.6, 1.8, boxstyle="round,pad=0.05",
+                                facecolor='#50C878', edgecolor='black', linewidth=1.5)
+        ax.add_patch(agent)
+        ax.text(x+0.8, 4.0, f'Agent {i+2}', ha='center', fontsize=9, fontweight='bold', color='white')
+        ax.text(x+0.8, 3.6, f'172.30.0.{12+i}', ha='center', fontsize=7, color='white')
+        ax.text(x+0.8, 3.2, 'tc qdisc:', ha='center', fontsize=7, color='white')
+        ax.text(x+0.8, 2.85, 'netem delay', ha='center', fontsize=6, color='white')
 
-    # Env vars arrow
-    ax.annotate('', xy=(2.4, 4.5), xytext=(4, 4.5),
-                arrowprops=dict(arrowstyle='->', color='purple', lw=1.5))
-    ax.text(2, 4.7, 'CTRL_ENDPOINT', fontsize=7, color='purple')
-    ax.text(2, 4.4, 'CTRL_BUFFER', fontsize=7, color='purple')
+    # Inter-tier arrow
+    ax.annotate('', xy=(5.3, 3.5), xytext=(4.7, 3.5),
+                arrowprops=dict(arrowstyle='<->', color='red', lw=2))
+    ax.text(5, 3.9, 'inter_tier:', ha='center', fontsize=7, color='red')
+    ax.text(5, 3.65, '5000us', ha='center', fontsize=7, color='red')
 
-    # UCX modes
-    ax.text(0.5, 0.6, 'UCX Modes:', fontsize=8, fontweight='bold')
-    ax.text(2, 0.6, 'rc/dc (RDMA) - Production', fontsize=7)
-    ax.text(5, 0.6, 'tcp/shm - Non-privileged CI/CD', fontsize=7)
+    # Harness to containers arrows
+    ax.annotate('', xy=(4, 6.4), xytext=(2.8, 1.2),
+                arrowprops=dict(arrowstyle='->', color='purple', lw=1.5, connectionstyle='arc3,rad=0.2'))
+    ax.text(3.2, 1.5, 'docker run', fontsize=7, color='purple')
+
+    ax.annotate('', xy=(1.5, 2.2), xytext=(1.5, 1.5),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=1.5))
+    ax.text(1.8, 1.85, 'docker exec tc', fontsize=7, color='orange')
+
+    # Legend
+    ax.text(7, 0.9, 'TC Rules per Agent:', fontsize=8, fontweight='bold')
+    ax.text(7, 0.6, 'HTB root → netem classes', fontsize=7)
+    ax.text(7, 0.35, 'Filter by dest IP → delay class', fontsize=7)
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
+
+def create_tier_threshold_diagram():
+    """Create diagram showing tier threshold calculation from tc params"""
+    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 6)
+    ax.axis('off')
+
+    ax.text(5, 5.7, 'Tier Threshold Generation from TC Parameters', ha='center', fontsize=14, fontweight='bold')
+
+    # Input: cluster_config.json
+    input_box = FancyBboxPatch((0.3, 3.5), 3.5, 1.8, boxstyle="round,pad=0.05",
+                                facecolor='#E3F2FD', edgecolor='#1976D2', linewidth=2)
+    ax.add_patch(input_box)
+    ax.text(2.05, 5.0, 'cluster_config.json', ha='center', fontsize=10, fontweight='bold', color='#1565C0')
+    ax.text(2.05, 4.6, 'network_shaping:', ha='center', fontsize=8)
+    ax.text(2.05, 4.25, 'intra_tier: 100us', ha='center', fontsize=8, color='#4CAF50')
+    ax.text(2.05, 3.9, 'inter_tier: 5000us', ha='center', fontsize=8, color='#F44336')
+
+    # Arrow
+    ax.annotate('', xy=(4.2, 4.4), xytext=(3.8, 4.4),
+                arrowprops=dict(arrowstyle='->', color='black', lw=2))
+
+    # Formula box
+    formula_box = FancyBboxPatch((4.3, 3.5), 2.8, 1.8, boxstyle="round,pad=0.05",
+                                  facecolor='#FFF9C4', edgecolor='#FBC02D', linewidth=2)
+    ax.add_patch(formula_box)
+    ax.text(5.7, 5.0, 'Threshold Calc', ha='center', fontsize=10, fontweight='bold', color='#F57F17')
+    ax.text(5.7, 4.5, 'geometric mean:', ha='center', fontsize=8)
+    ax.text(5.7, 4.1, '√(100 × 5000)', ha='center', fontsize=9, fontweight='bold')
+    ax.text(5.7, 3.7, '= 707 us', ha='center', fontsize=9, fontweight='bold', color='#E65100')
+
+    # Arrow
+    ax.annotate('', xy=(7.5, 4.4), xytext=(7.1, 4.4),
+                arrowprops=dict(arrowstyle='->', color='black', lw=2))
+
+    # Output: tier_config.json
+    output_box = FancyBboxPatch((7.6, 3.5), 2.1, 1.8, boxstyle="round,pad=0.05",
+                                 facecolor='#E8F5E9', edgecolor='#4CAF50', linewidth=2)
+    ax.add_patch(output_box)
+    ax.text(8.65, 5.0, 'tier_config.json', ha='center', fontsize=10, fontweight='bold', color='#2E7D32')
+    ax.text(8.65, 4.5, 'thresholds_ns:', ha='center', fontsize=8)
+    ax.text(8.65, 4.1, '[707000]', ha='center', fontsize=9, fontweight='bold')
+
+    # Dendrogram representation
+    ax.text(5, 3.0, 'Dendrogram Cut Point', ha='center', fontsize=10, fontweight='bold')
+
+    # Simple dendrogram
+    # Vertical lines for agents
+    for i, x in enumerate([1.5, 2.5, 3.5, 6.5, 7.5, 8.5]):
+        ax.plot([x, x], [0.5, 1.2], 'k-', linewidth=1.5)
+        ax.text(x, 0.3, f'A{i}', ha='center', fontsize=8)
+
+    # Intra-tier merges (low)
+    ax.plot([1.5, 2.5], [1.2, 1.2], 'g-', linewidth=2)
+    ax.plot([2, 2], [1.2, 1.5], 'g-', linewidth=2)
+    ax.plot([2, 3.5], [1.5, 1.5], 'g-', linewidth=2)
+    ax.plot([2.75, 2.75], [1.5, 1.8], 'g-', linewidth=2)
+
+    ax.plot([6.5, 7.5], [1.2, 1.2], 'g-', linewidth=2)
+    ax.plot([7, 7], [1.2, 1.5], 'g-', linewidth=2)
+    ax.plot([7, 8.5], [1.5, 1.5], 'g-', linewidth=2)
+    ax.plot([7.75, 7.75], [1.5, 1.8], 'g-', linewidth=2)
+
+    # Inter-tier merge (high)
+    ax.plot([2.75, 7.75], [2.5, 2.5], 'r-', linewidth=2)
+    ax.plot([2.75, 2.75], [1.8, 2.5], 'b-', linewidth=2)
+    ax.plot([7.75, 7.75], [1.8, 2.5], 'b-', linewidth=2)
+
+    # Threshold line
+    ax.plot([0.5, 9.5], [2.1, 2.1], 'r--', linewidth=2, alpha=0.7)
+    ax.text(9.7, 2.1, '707us', fontsize=8, color='red', va='center')
+
+    # Labels
+    ax.text(0.5, 1.2, '100us', fontsize=7, color='green')
+    ax.text(0.5, 2.5, '5000us', fontsize=7, color='red')
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
+
+def create_result_collection_diagram():
+    """Create diagram showing result collection flow from containers"""
+    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 6)
+    ax.axis('off')
+
+    ax.text(5, 5.7, 'Result Collection Flow', ha='center', fontsize=14, fontweight='bold')
+
+    # Controller container
+    ctrl = FancyBboxPatch((0.5, 3.5), 2.5, 1.8, boxstyle="round,pad=0.05",
+                           facecolor='#4A90D9', edgecolor='black', linewidth=2)
+    ax.add_patch(ctrl)
+    ax.text(1.75, 5.0, 'Controller', ha='center', fontsize=10, fontweight='bold', color='white')
+    ax.text(1.75, 4.5, 'Writes to:', ha='center', fontsize=8, color='white')
+    ax.text(1.75, 4.1, '/output/*.csv', ha='center', fontsize=8, color='white')
+    ax.text(1.75, 3.7, '/output/*.json', ha='center', fontsize=7, color='white')
+
+    # Volume mount arrow
+    ax.annotate('', xy=(3.3, 4.4), xytext=(3.0, 4.4),
+                arrowprops=dict(arrowstyle='->', color='purple', lw=2))
+    ax.text(3.15, 4.7, 'volume', fontsize=7, color='purple')
+    ax.text(3.15, 4.15, 'mount', fontsize=7, color='purple')
+
+    # Host output directory
+    host_out = FancyBboxPatch((3.4, 3.5), 2.3, 1.8, boxstyle="round,pad=0.05",
+                               facecolor='#FFE0B2', edgecolor='#FF9800', linewidth=2)
+    ax.add_patch(host_out)
+    ax.text(4.55, 5.0, 'Host: ./output/', ha='center', fontsize=10, fontweight='bold', color='#E65100')
+    ax.text(4.55, 4.5, 'latency_matrix.csv', ha='center', fontsize=8)
+    ax.text(4.55, 4.1, 'bandwidth_*.csv', ha='center', fontsize=8)
+    ax.text(4.55, 3.7, '.tc_ready (signal)', ha='center', fontsize=7, color='gray')
+
+    # Harness collect arrow
+    ax.annotate('', xy=(6.0, 4.4), xytext=(5.7, 4.4),
+                arrowprops=dict(arrowstyle='->', color='green', lw=2))
+    ax.text(5.85, 4.7, 'harness', fontsize=7, color='green')
+    ax.text(5.85, 4.15, 'collect', fontsize=7, color='green')
+
+    # Timestamped results
+    results = FancyBboxPatch((6.1, 3.2), 3.5, 2.4, boxstyle="round,pad=0.05",
+                              facecolor='#E8F5E9', edgecolor='#4CAF50', linewidth=2)
+    ax.add_patch(results)
+    ax.text(7.85, 5.3, './output/2024-12-17_14-30/', ha='center', fontsize=9, fontweight='bold', color='#2E7D32')
+    ax.text(7.85, 4.8, 'latency_matrix.csv', ha='center', fontsize=8)
+    ax.text(7.85, 4.45, 'bandwidth_matrix.csv', ha='center', fontsize=8)
+    ax.text(7.85, 4.1, 'bandwidth_detailed.csv', ha='center', fontsize=8)
+    ax.text(7.85, 3.75, 'tier_config.json (generated)', ha='center', fontsize=8, color='#1976D2')
+    ax.text(7.85, 3.4, 'topology.svg (generated)', ha='center', fontsize=8, color='#1976D2')
+
+    # Flow description
+    ax.text(5, 2.7, 'Collection Steps:', ha='center', fontsize=10, fontweight='bold')
+
+    steps = [
+        '1. Wait for controller container to exit',
+        '2. Create timestamped results directory',
+        '3. Copy CSV/JSON files from ./output/',
+        '4. Generate tier_config.json from tc params',
+        '5. Run topology_viz → topology.svg'
+    ]
+
+    for i, step in enumerate(steps):
+        ax.text(1, 2.2 - i*0.4, step, fontsize=8)
 
     plt.tight_layout()
     buf = io.BytesIO()
@@ -811,7 +1282,7 @@ def create_error_handling_diagram():
 def build_pdf():
     """Build the complete PDF document"""
     doc = SimpleDocTemplate(
-        "/home/rarun/nixl-topo-disc/NIXL_Topology_Discovery_Design.pdf",
+        "/home/rarun/nixl-topo-disc/docs/NIXL_Topology_Discovery_Design.pdf",
         pagesize=letter,
         rightMargin=0.5*inch,
         leftMargin=0.5*inch,
@@ -853,109 +1324,211 @@ def build_pdf():
     story.append(Spacer(1, 0.5*inch))
 
     # Architecture diagram
-    story.append(Paragraph("1. System Architecture", styles['Section']))
-    story.append(Paragraph("Agents run as containers spawned by the Controller via orchestrator (Docker/K8s). All communication uses NIXL RDMA transfers through a shared controller buffer - no TCP sockets. Each agent registers its NIXL endpoint during bootstrap and receives peer metadata via the controller buffer.", styles['Body']))
-
     img_buf = create_component_diagram()
-    story.append(Image(img_buf, width=7*inch, height=4.2*inch))
+    story.append(KeepTogether([
+        Paragraph("1. System Architecture", styles['Section']),
+        Paragraph("Agents run as containers spawned by the Controller via orchestrator (Docker/K8s). All communication uses NIXL RDMA transfers through a shared controller buffer - no TCP sockets. Each agent registers its NIXL endpoint during bootstrap and receives peer metadata via the controller buffer.", styles['Body']),
+        Image(img_buf, width=7*inch, height=4.2*inch),
+    ]))
 
     story.append(PageBreak())
 
     # Buffer layout
-    story.append(Paragraph("2. Controller Buffer Layout", styles['Section']))
-    story.append(Paragraph("Single NIXL-registered buffer containing all shared state: agent metadata slots for endpoint blobs, test command region for orchestration, notification slots for async wakeup, and results region for data collection. Agents compute their slot offsets by reading the header.", styles['Body']))
-
     img_buf = create_buffer_layout_diagram()
-    story.append(Image(img_buf, width=6.5*inch, height=3.6*inch))
+    story.append(KeepTogether([
+        Paragraph("2. Controller Buffer Layout", styles['Section']),
+        Paragraph("Single NIXL-registered buffer containing all shared state: agent metadata slots for endpoint blobs, test command region for orchestration, and results region for data collection. NIXL notifications (via genNotif/getNotifs API) are used for async coordination. Agents compute their slot offsets by reading the header.", styles['Body']),
+        Image(img_buf, width=6.5*inch, height=3.6*inch),
+    ]))
     story.append(Spacer(1, 0.2*inch))
 
-    # Bootstrap sequence
-    story.append(Paragraph("3. Bootstrap & Rendezvous Sequence", styles['Section']))
-    story.append(Paragraph("Controller spawns agent containers with NIXL metadata via environment variables (CTRL_ENDPOINT, CTRL_BUFFER, AGENT_ID). Agents decode this metadata, establish NIXL connections, and write their own endpoint info. Controller notifies all agents when rendezvous is complete.", styles['Body']))
+    # Agent buffer layout
+    img_buf = create_agent_buffer_layout_diagram()
+    story.append(KeepTogether([
+        Paragraph("2b. Agent Buffer Layout", styles['Section']),
+        Paragraph("Each agent allocates a 256MB NIXL-registered buffer. Transfer slots receive data from peer agents during bandwidth tests. Command inbox receives test commands from controller. Mailbox is used for ping-pong latency measurements.", styles['Body']),
+        Image(img_buf, width=6.5*inch, height=2.6*inch),
+    ]))
 
+    # Bootstrap sequence
     img_buf = create_sequence_diagram_bootstrap()
-    story.append(Image(img_buf, width=7*inch, height=4.9*inch))
+    story.append(KeepTogether([
+        Paragraph("3. Bootstrap & Rendezvous Sequence", styles['Section']),
+        Paragraph("Controller spawns agent containers with NIXL metadata via environment variables (CTRL_ENDPOINT, CTRL_BUFFER, AGENT_ID). Agents decode this metadata, establish NIXL connections, and write their own endpoint info. Controller notifies all agents when rendezvous is complete.", styles['Body']),
+        Image(img_buf, width=7*inch, height=4.9*inch),
+    ]))
 
     story.append(PageBreak())
 
-    # Test sequence
-    story.append(Paragraph("4. Test Execution Protocol", styles['Section']))
-    story.append(Paragraph("Controller writes commands to shared buffer and sends notifications. Agents wake on notification, read commands, execute tests, and update status. Notification-based design minimizes CPU polling; fallback to polling available for environments without UCX notifications.", styles['Body']))
+    # Peer discovery sequence
+    img_buf = create_sequence_peer_discovery()
+    story.append(KeepTogether([
+        Paragraph("3b. Peer Discovery Sequence", styles['Section']),
+        Paragraph("After rendezvous completes, agents read peer metadata from the controller buffer via RDMA, load remote endpoint descriptors into NIXL using loadRemoteMD(), and signal readiness. This enables direct agent-to-agent RDMA communication for performance tests.", styles['Body']),
+        Image(img_buf, width=7*inch, height=3.8*inch),
+    ]))
+    story.append(Spacer(1, 0.2*inch))
 
+    # Test sequence
     img_buf = create_sequence_diagram_test()
-    story.append(Image(img_buf, width=7*inch, height=4.2*inch))
+    story.append(KeepTogether([
+        Paragraph("4. Test Execution Protocol", styles['Section']),
+        Paragraph("Controller writes test commands to agent command inboxes via RDMA and sends NIXL notifications to wake agents. Agents poll for commands, execute tests, and write results back to the controller's result region. The NIXL notification API (genNotif/getNotifs) provides the async coordination layer.", styles['Body']),
+        Image(img_buf, width=7*inch, height=4.2*inch),
+    ]))
+
+    story.append(PageBreak())
+
+    # Ping-pong latency detail
+    img_buf = create_sequence_ping_pong()
+    story.append(KeepTogether([
+        Paragraph("4a. Ping-Pong Latency Test Detail", styles['Section']),
+        Paragraph("The initiator agent sends a small message to the responder's mailbox via RDMA write, then polls its own mailbox waiting for a response. The responder polls, detects the incoming message (via sequence number increment), and responds. Round-trip time is measured over thousands of iterations to compute average latency.", styles['Body']),
+        Image(img_buf, width=7*inch, height=4.2*inch),
+    ]))
+    story.append(Spacer(1, 0.2*inch))
+
+    # Bandwidth test detail
+    img_buf = create_sequence_bandwidth()
+    story.append(KeepTogether([
+        Paragraph("4b. Bandwidth Test Detail", styles['Section']),
+        Paragraph("The sender issues a window of concurrent RDMA writes to the receiver's transfer slots, waits for all completions, then repeats for the configured iteration count. Throughput is calculated from total bytes transferred divided by elapsed time. Window size enables pipelining to saturate the link.", styles['Body']),
+        Image(img_buf, width=7*inch, height=4.2*inch),
+    ]))
     story.append(Spacer(1, 0.2*inch))
 
     # Test phases
-    story.append(Paragraph("5. Incremental Test Phases", styles['Section']))
-    story.append(Paragraph("Phase 1 (PAIRWISE_LATENCY) runs quickly to produce Level 1 topology with tiers and default bandwidth. Phase 2 adds measured capacities. Optional Phase 2b detects shared bottlenecks via concurrent transfer correlation. Users can stop at any level based on time constraints.", styles['Body']))
-
     img_buf = create_test_phases_diagram()
-    story.append(Image(img_buf, width=7*inch, height=3.5*inch))
+    story.append(KeepTogether([
+        Paragraph("5. Incremental Test Phases", styles['Section']),
+        Paragraph("Phase 1 (PAIRWISE_LATENCY) runs quickly with 64-byte ping-pong to produce Level 1 topology with tiers. Phase 2 (BANDWIDTH) sweeps 7 message sizes (1K, 4K, 16K, 64K, 256K, 1M, 4M bytes) bidirectionally per pair, outputting latency_matrix.csv, bandwidth_matrix.csv, and bandwidth_detailed.csv. Optional Phase 2b detects shared bottlenecks via concurrent transfer correlation.", styles['Body']),
+        Image(img_buf, width=7*inch, height=3.5*inch),
+    ]))
 
     story.append(PageBreak())
 
     # Topology algorithm
-    story.append(Paragraph("6. Topology Inference Algorithm", styles['Section']))
-    story.append(Paragraph("Four-phase algorithm: (1) Hierarchical clustering groups nodes by latency similarity, (2) Hidden node inference creates switch nodes for clusters, (3) Edge construction connects physical to hidden nodes with capacity estimates, (4) Optional bottleneck detection identifies shared links.", styles['Body']))
-
     img_buf = create_topology_algo_diagram()
-    story.append(Image(img_buf, width=6.5*inch, height=4.5*inch))
+    story.append(KeepTogether([
+        Paragraph("6. Topology Inference Algorithm", styles['Section']),
+        Paragraph("Four-phase algorithm: (1) Hierarchical clustering groups nodes by latency similarity, (2) Hidden node inference creates switch nodes for clusters, (3) Edge construction connects physical to hidden nodes with capacity estimates, (4) Optional bottleneck detection identifies shared links.", styles['Body']),
+        Image(img_buf, width=6.5*inch, height=4.5*inch),
+    ]))
     story.append(Spacer(1, 0.2*inch))
 
     # Topology example
-    story.append(Paragraph("7. Topology Example: Input to Output", styles['Section']))
-    story.append(Paragraph("Example: 6-node cluster with two tight clusters (N0-N2 at 2us, N3-N4 at 3us) and one isolated node (N5 at 50us). Algorithm infers ToR switches for each cluster and spine switch connecting them, producing hierarchical graph.", styles['Body']))
-
     img_buf = create_topology_example()
-    story.append(Image(img_buf, width=7.5*inch, height=3.4*inch))
+    story.append(KeepTogether([
+        Paragraph("7. Topology Example: Input to Output", styles['Section']),
+        Paragraph("Example: 6-node cluster with two tight clusters (N0-N2 at 2us, N3-N4 at 3us) and one isolated node (N5 at 50us). Algorithm infers ToR switches for each cluster and spine switch connecting them, producing hierarchical graph.", styles['Body']),
+        Image(img_buf, width=7.5*inch, height=3.4*inch),
+    ]))
 
     story.append(PageBreak())
 
     # Test harness
-    story.append(Paragraph("8. Test Harness Deployment", styles['Section']))
-    story.append(Paragraph("Containers require host networking and RDMA device access for production measurements. UCX transport can be configured via UCX_TLS environment variable: use 'rc/dc' for RDMA, 'tcp/shm' for non-privileged CI/CD testing. Functional tests work without special permissions.", styles['Body']))
-
     img_buf = create_test_harness_diagram()
-    story.append(Image(img_buf, width=7*inch, height=4.2*inch))
+    story.append(KeepTogether([
+        Paragraph("8. Test Harness: TC Network Emulation", styles['Section']),
+        Paragraph("The test harness creates simulated cluster topologies using Linux tc (traffic control) with netem (network emulation). This enables testing topology discovery algorithms without physical multi-rack infrastructure. The harness manages container lifecycle, applies tc rules to inject latency between tiers, and collects results.", styles['Body']),
+        Image(img_buf, width=7.5*inch, height=4.8*inch),
+    ]))
+
+    story.append(Paragraph("<b>TC Rule Structure:</b> Each agent container gets HTB (Hierarchical Token Bucket) qdisc with netem classes. Traffic is classified by destination IP: intra-tier traffic (same rack) gets low delay (e.g., 100us), inter-tier traffic (cross-rack) gets high delay (e.g., 5000us). Filters route packets to appropriate delay class based on destination.", styles['Body']))
+
+    story.append(Paragraph("<b>Configuration Example (two_rack.json):</b>", styles['Body']))
+    config_example = """
+    {
+      "network_shaping": {
+        "tiers": [
+          { "name": "rack-0", "agents": [0,1], "intra_tier_latency_us": 100 },
+          { "name": "rack-1", "agents": [2,3], "intra_tier_latency_us": 100 }
+        ],
+        "inter_tier": { "latency_us": 5000, "jitter_us": 500 }
+      }
+    }
+    """
+    story.append(Paragraph(f"<font face='Courier' size='8'>{config_example}</font>", styles['Body']))
+
+    story.append(PageBreak())
+
+    # Tier threshold generation
+    img_buf = create_tier_threshold_diagram()
+    story.append(KeepTogether([
+        Paragraph("8b. Tier Threshold Generation", styles['Section']),
+        Paragraph("The harness automatically generates tier_config.json for the topology discovery algorithm using the geometric mean of tc latency parameters. This provides optimal log-scale separation for hierarchical clustering - the threshold falls naturally between intra-tier and inter-tier latencies.", styles['Body']),
+        Image(img_buf, width=7*inch, height=3.5*inch),
+    ]))
+
+    story.append(Paragraph("<b>Formula:</b> threshold = √(max_intra_tier × inter_tier). For intra=100us and inter=5000us: √(100×5000) = 707us. The generated tier_config.json contains this threshold in nanoseconds, used by topology_viz to draw the dendrogram cut line.", styles['Body']))
     story.append(Spacer(1, 0.2*inch))
 
-    # Error handling
-    story.append(Paragraph("9. Error Handling & Recovery", styles['Section']))
-    story.append(Paragraph("Agents maintain heartbeat timestamp; controller detects dead agents via timeout. Failed pairs trigger configurable retry with exponential backoff. Graceful degradation skips unavailable agents and accepts partial results rather than aborting entire test.", styles['Body']))
+    # Result collection
+    img_buf = create_result_collection_diagram()
+    story.append(KeepTogether([
+        Paragraph("8c. Result Collection", styles['Section']),
+        Paragraph("Results flow from controller container to host via Docker volume mount. The harness collect command waits for controller exit, creates timestamped output directory, copies result files, generates tier_config.json from tc params, and optionally runs topology_viz to produce visualization.", styles['Body']),
+        Image(img_buf, width=7*inch, height=3.5*inch),
+    ]))
 
+    story.append(Paragraph("<b>Output Files:</b> latency_matrix.csv (NxN RTT in nanoseconds), bandwidth_matrix.csv (peak MB/s per pair), bandwidth_detailed.csv (all message sizes), tier_config.json (auto-generated thresholds), topology.svg (dendrogram visualization).", styles['Body']))
+
+    story.append(PageBreak())
+
+    # Error handling
     img_buf = create_error_handling_diagram()
-    story.append(Image(img_buf, width=6.5*inch, height=2.8*inch))
+    story.append(KeepTogether([
+        Paragraph("9. Error Handling & Recovery", styles['Section']),
+        Paragraph("Agents maintain heartbeat timestamp; controller detects dead agents via timeout. Failed pairs trigger configurable retry with exponential backoff. Graceful degradation skips unavailable agents and accepts partial results rather than aborting entire test.", styles['Body']),
+        Image(img_buf, width=6.5*inch, height=2.8*inch),
+    ]))
 
     story.append(PageBreak())
 
     # Implementation roadmap
-    story.append(Paragraph("10. Implementation Roadmap - Next Steps", styles['Section']))
+    story.append(KeepTogether([
+        Paragraph("10. Implementation Status & Next Steps", styles['Section']),
+        Paragraph("<b>Completed:</b>", styles['Body']),
+    ]))
 
-    story.append(Paragraph("<b>Immediate Priorities:</b>", styles['Body']))
-
-    bullets = [
-        "Implement Agent bootstrap: env var parsing, NIXL initialization, metadata upload to controller buffer",
-        "Implement Controller buffer management: allocation, header initialization, rendezvous wait loop",
-        "Implement PAIRWISE_LATENCY test: ping-pong protocol, timing measurement, results aggregation",
-        "Build basic container harness with Docker Compose for single-host testing"
+    completed = [
+        "Agent bootstrap: env var parsing, NIXL initialization, metadata upload to controller buffer",
+        "Controller buffer management: allocation, header initialization, rendezvous wait loop",
+        "PAIRWISE_LATENCY test: ping-pong protocol, timing measurement, results aggregation",
+        "BANDWIDTH test with message size sweep: 1K, 4K, 16K, 64K, 256K, 1M, 4M bytes",
+        "Bidirectional bandwidth testing (A->B and B->A)",
+        "Container harness with Docker Compose for single-host testing",
+        "CSV outputs: latency_matrix.csv, bandwidth_matrix.csv, bandwidth_detailed.csv"
     ]
-    for bullet in bullets:
+    for bullet in completed:
         story.append(Paragraph(f"&bull; {bullet}", styles['Body']))
 
     story.append(Spacer(1, 0.1*inch))
-    story.append(Paragraph("<b>Phase 2 (After Core Works):</b> Add BANDWIDTH tests, notification-based coordination, hierarchical clustering for topology inference, error handling with heartbeats and graceful degradation.", styles['Body']))
+    story.append(Paragraph("<b>Next Steps:</b>", styles['Body']))
+
+    next_steps = [
+        "LATENCY_SWEEP: Transfer time vs message size curves (8B-64KB, 1000 iterations per size)",
+        "Topology inference: Hierarchical clustering from latency matrix",
+        "Concurrent bandwidth bottleneck detection (optional Phase 2b)"
+    ]
+    for bullet in next_steps:
+        story.append(Paragraph(f"&bull; {bullet}", styles['Body']))
 
     # Key design decisions table
     story.append(Spacer(1, 0.3*inch))
-    story.append(Paragraph("Key Design Decisions Summary", styles['Section']))
+    story.append(KeepTogether([
+        Paragraph("Key Design Decisions Summary", styles['Section']),
+        Spacer(1, 0.1*inch),
+    ]))
 
     decisions = [
         ['Decision', 'Choice', 'Rationale'],
         ['IPC Mechanism', 'NIXL-only (no TCP)', 'Simpler security model, container-friendly'],
         ['Agent spawn', 'Orchestrator + env vars', 'No handshake needed, metadata pre-shared'],
-        ['Coordination', 'Notification-based', 'Low CPU, immediate wakeup, scalable'],
+        ['Coordination', 'Polling-based', 'Reliable, works across all environments'],
         ['Buffer allocation', 'Upfront (256MB/agent)', 'Single metadata share, no per-test sync'],
+        ['Bandwidth sweep', '7 message sizes (1K-4M)', 'Characterize full performance curve'],
+        ['CSV output', 'Matrix + Detailed', 'Quick topology view + full measurement data'],
         ['Topology inference', 'Incremental levels', 'Quick results first, detail as needed'],
         ['Results upload', 'Initiator-only', 'Reduces data duplication']
     ]
@@ -978,7 +1551,7 @@ def build_pdf():
     story.append(table)
 
     doc.build(story)
-    print("PDF generated: /home/rarun/nixl-topo-disc/NIXL_Topology_Discovery_Design.pdf")
+    print("PDF generated: /home/rarun/nixl-topo-disc/docs/NIXL_Topology_Discovery_Design.pdf")
 
 
 if __name__ == "__main__":
