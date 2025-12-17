@@ -31,6 +31,17 @@ struct BandwidthResult {
     bool success;
 };
 
+/// Stores detailed latency result per message size (for latency sweep)
+struct LatencyDetailedResult {
+    uint32_t initiator_id;
+    uint32_t responder_id;
+    uint64_t message_size;
+    uint64_t avg_latency_ns;
+    uint64_t min_latency_ns;
+    uint64_t max_latency_ns;
+    bool success;
+};
+
 /// Configuration for tests loaded from JSON
 struct TestConfig {
     // Ping-pong latency test parameters
@@ -45,10 +56,19 @@ struct TestConfig {
     uint32_t bw_warmup_iterations = 10;   // Warmup windows
     uint32_t bw_window_size = 64;         // Outstanding messages per window
 
+    // Latency sweep parameters (for transfer time vs message size curves)
+    std::vector<uint64_t> latency_message_sizes = {8, 16, 32, 64, 128, 256, 512,
+                                                    1024, 2048, 4096, 8192, 16384,
+                                                    32768, 65536};  // 8B to 64KB
+    uint32_t latency_sweep_iterations = 1000;    // Measured iterations per size
+    uint32_t latency_sweep_warmup = 100;         // Warmup iterations per size
+    bool run_latency_sweep = false;              // Disabled by default (takes longer)
+
     // Output configuration
     std::string output_csv_path = "/tmp/latency_matrix.csv";  // Default output path
     std::string bandwidth_csv_path = "/tmp/bandwidth_matrix.csv";  // Bandwidth peak matrix
     std::string bandwidth_detailed_csv_path = "/tmp/bandwidth_detailed.csv";  // All msg sizes
+    std::string latency_detailed_csv_path = "/tmp/latency_detailed.csv";  // Latency sweep results
 
     // Test selection (empty = test all pairs)
     bool test_all_pairs = true;           // If true, test all agent pairs
@@ -195,11 +215,27 @@ public:
     /// @param output Output stream (e.g., std::cout or file)
     void log_bandwidth_detailed_csv(std::ostream& output) const;
 
+    /// Store a detailed latency result for a specific message size (for latency sweep).
+    /// @param initiator_id Agent that initiated the test
+    /// @param responder_id Agent that responded
+    /// @param message_size Message size used in test
+    /// @param result Test result from the initiator
+    void store_latency_detailed_result(uint32_t initiator_id, uint32_t responder_id,
+                                        uint64_t message_size, const TestResult& result);
+
+    /// Log detailed latency results (all message sizes) in CSV format.
+    /// Format: initiator,responder,msg_size,avg_latency_ns,min_latency_ns,max_latency_ns
+    /// @param output Output stream (e.g., std::cout or file)
+    void log_latency_detailed_csv(std::ostream& output) const;
+
     /// Get stored latency results.
     const std::vector<LatencyResult>& latency_results() const { return latency_results_; }
 
     /// Get stored bandwidth results.
     const std::vector<BandwidthResult>& bandwidth_results() const { return bandwidth_results_; }
+
+    /// Get stored detailed latency results (for latency sweep).
+    const std::vector<LatencyDetailedResult>& latency_detailed_results() const { return latency_detailed_results_; }
 
 private:
     /// Load metadata for a newly registered agent so we can send it notifications.
@@ -215,6 +251,7 @@ private:
     std::vector<bool> agent_metadata_loaded_;       // Track which agents have been loaded
     std::vector<LatencyResult> latency_results_;    // Stored latency results for CSV output
     std::vector<BandwidthResult> bandwidth_results_;  // Stored bandwidth results for CSV output
+    std::vector<LatencyDetailedResult> latency_detailed_results_;  // Stored detailed latency results (sweep)
 };
 
 } // namespace nixl_topo

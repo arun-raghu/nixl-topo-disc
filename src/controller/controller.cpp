@@ -655,6 +655,36 @@ void Controller::log_bandwidth_detailed_csv(std::ostream& output) const {
     }
 }
 
+void Controller::store_latency_detailed_result(uint32_t initiator_id, uint32_t responder_id,
+                                                uint64_t message_size, const TestResult& result) {
+    LatencyDetailedResult lr;
+    lr.initiator_id = initiator_id;
+    lr.responder_id = responder_id;
+    lr.message_size = message_size;
+    lr.avg_latency_ns = from_wire64(result.avg_latency_ns);
+    lr.min_latency_ns = from_wire64(result.min_latency_ns);
+    lr.max_latency_ns = from_wire64(result.max_latency_ns);
+
+    auto status = static_cast<TestStatus>(from_wire32(static_cast<uint32_t>(result.status)));
+    lr.success = (status == TestStatus::COMPLETE);
+
+    latency_detailed_results_.push_back(lr);
+}
+
+void Controller::log_latency_detailed_csv(std::ostream& output) const {
+    output << "initiator,responder,msg_size,avg_latency_ns,min_latency_ns,max_latency_ns\n";
+    for (const auto& lr : latency_detailed_results_) {
+        if (lr.success) {
+            output << lr.initiator_id << ","
+                   << lr.responder_id << ","
+                   << lr.message_size << ","
+                   << lr.avg_latency_ns << ","
+                   << lr.min_latency_ns << ","
+                   << lr.max_latency_ns << "\n";
+        }
+    }
+}
+
 // =============================================================================
 // TestConfig implementation
 // =============================================================================
@@ -712,6 +742,26 @@ TestConfig TestConfig::from_json(const std::string& filepath) {
         }
     }
 
+    // Parse latency sweep parameters
+    if (j.contains("latency_sweep")) {
+        auto& ls = j["latency_sweep"];
+        if (ls.contains("message_sizes")) {
+            config.latency_message_sizes.clear();
+            for (const auto& size : ls["message_sizes"]) {
+                config.latency_message_sizes.push_back(size.get<uint64_t>());
+            }
+        }
+        if (ls.contains("iterations")) {
+            config.latency_sweep_iterations = ls["iterations"].get<uint32_t>();
+        }
+        if (ls.contains("warmup_iterations")) {
+            config.latency_sweep_warmup = ls["warmup_iterations"].get<uint32_t>();
+        }
+        if (ls.contains("enabled")) {
+            config.run_latency_sweep = ls["enabled"].get<bool>();
+        }
+    }
+
     // Parse output configuration
     if (j.contains("output")) {
         auto& out = j["output"];
@@ -724,6 +774,9 @@ TestConfig TestConfig::from_json(const std::string& filepath) {
         if (out.contains("bandwidth_detailed_csv_path")) {
             config.bandwidth_detailed_csv_path = out["bandwidth_detailed_csv_path"].get<std::string>();
         }
+        if (out.contains("latency_detailed_csv_path")) {
+            config.latency_detailed_csv_path = out["latency_detailed_csv_path"].get<std::string>();
+        }
     }
 
     // Parse test selection
@@ -732,6 +785,9 @@ TestConfig TestConfig::from_json(const std::string& filepath) {
     }
     if (j.contains("run_bandwidth_tests")) {
         config.run_bandwidth_tests = j["run_bandwidth_tests"].get<bool>();
+    }
+    if (j.contains("run_latency_sweep")) {
+        config.run_latency_sweep = j["run_latency_sweep"].get<bool>();
     }
 
 #else
@@ -764,13 +820,29 @@ void TestConfig::print() const {
               << "    iterations:         " << bw_iterations << "\n"
               << "    warmup_iterations:  " << bw_warmup_iterations << "\n"
               << "    window_size:        " << bw_window_size << "\n"
+              << "  Latency sweep:\n"
+              << "    enabled:            " << (run_latency_sweep ? "true" : "false") << "\n"
+              << "    message_sizes:      [";
+    for (size_t i = 0; i < latency_message_sizes.size(); ++i) {
+        if (i > 0) std::cout << ", ";
+        if (latency_message_sizes[i] >= 1024) {
+            std::cout << (latency_message_sizes[i] / 1024) << "K";
+        } else {
+            std::cout << latency_message_sizes[i];
+        }
+    }
+    std::cout << "]\n"
+              << "    iterations:         " << latency_sweep_iterations << "\n"
+              << "    warmup_iterations:  " << latency_sweep_warmup << "\n"
               << "  Output:\n"
               << "    latency_csv_path:   " << output_csv_path << "\n"
               << "    bandwidth_csv_path: " << bandwidth_csv_path << "\n"
               << "    bandwidth_detailed: " << bandwidth_detailed_csv_path << "\n"
+              << "    latency_detailed:   " << latency_detailed_csv_path << "\n"
               << "  Options:\n"
               << "    test_all_pairs:     " << (test_all_pairs ? "true" : "false") << "\n"
-              << "    run_bandwidth_tests:" << (run_bandwidth_tests ? "true" : "false") << "\n";
+              << "    run_bandwidth_tests:" << (run_bandwidth_tests ? "true" : "false") << "\n"
+              << "    run_latency_sweep:  " << (run_latency_sweep ? "true" : "false") << "\n";
 }
 
 } // namespace nixl_topo

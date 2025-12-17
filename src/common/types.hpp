@@ -64,7 +64,7 @@ enum class TestStatus : uint32_t {
 // =============================================================================
 
 constexpr size_t COMMAND_INBOX_SIZE = 64;     // Where controller writes commands to agent
-constexpr size_t MAILBOX_SIZE = 4096;         // For ping-pong data exchange (up to 4KB messages)
+constexpr size_t MAILBOX_SIZE = 131072;       // For ping-pong data exchange (128KB, supports up to 64KB messages)
 constexpr size_t TEST_RESULT_SIZE = 128;      // Result slot size per agent
 
 // =============================================================================
