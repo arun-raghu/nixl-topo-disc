@@ -195,7 +195,7 @@ nixl-topo-disc/
 
 ## AI Agent Usage
 
-All the code (as well as design docs and presentation) in this repository was generated using AI agents (Claude Code). The repository structure itself was generated via prompts in [repo_prompts.txt](repo_prompts.txt). The overall design for the agent to create this code was generated via [design_prompts.txt](design_prompts.txt). See [coding_prompts.txt](coding_prompts.txt) for the prompts used to generate the code. Here are some of my [learnings](docs/Learnings.md) from this exercise.
+All the code (as well as [design doc](docs/NIXL_Topology_Discovery_Design.pdf) and [presentation](docs/1.nixl-topo-disco-slides.pdf)) in this repository was generated using AI agents (Claude Code). The repository structure itself was generated via prompts in [repo_prompts.txt](repo_prompts.txt). The overall design for the agent to create this code was generated via [design_prompts.txt](design_prompts.txt). See [coding_prompts.txt](coding_prompts.txt) for the prompts used to generate the code. Here are some of my [learnings](docs/Learnings.md) from this exercise.
 
 ## License
 
